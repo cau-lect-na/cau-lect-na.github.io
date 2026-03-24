@@ -1,4 +1,5 @@
-#theme: jekyll-theme-minimal
 remote_theme: jekyll/minima
 title: lectures
 description: "[Home](/) | [Rotation](/rotation)"
+
+#theme: jekyll-theme-minimal
