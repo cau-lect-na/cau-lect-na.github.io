@@ -1,5 +1,6 @@
 ---
-layout: rotation
+layout: default
+title: Rotation
 ---
 
 rotation
