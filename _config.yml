@@ -2,3 +2,6 @@ theme: minima
 title: lectures
 #description: 
 #theme: jekyll-theme-minimal
+
+sass:
+  style: compressed
