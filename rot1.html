@@ -361,15 +361,15 @@
       drawLines(cubeBuffer, cubeWireVertices.length / 3, [0.6, 0.6, 0.6], mat4Identity(), vp);
 
       // x axis + cube at end (blue)
-      drawLines(axisBuffer, 2, [0.0, 0.0, 1.0], mat4Identity(), vp);
-      drawLines(cubeBuffer, cubeWireVertices.length / 3, [0.5, 0.6, 1.0], mat4Translation(5, 0, 0), vp);
+      drawLines(axisBuffer, 2, [0.5, 0.5, 1.0], mat4Identity(), vp);
+      drawLines(cubeBuffer, cubeWireVertices.length / 3, [0.5, 0.5, 1.0], mat4Translation(5, 0, 0), vp);
 
       // y axis + cube at end (green)
-      drawLines(axisBuffer, 4, [0.0, 0.8, 0.0], mat4Identity(), vp); // uses first 4 vertices, but we'll redraw only needed below
+      drawLines(axisBuffer, 4, [0.3, 1.0, 0.3], mat4Identity(), vp); // uses first 4 vertices, but we'll redraw only needed below
       bindBuffer(axisBuffer);
       let mvp = mat4Multiply(vp, mat4Identity());
       gl.uniformMatrix4fv(uMVP, false, mvp);
-      gl.uniform3fv(uColor, [0.0, 0.8, 0.0]);
+      gl.uniform3fv(uColor, [0.3, 0.1, 0.3]);
       gl.drawArrays(gl.LINES, 2, 2);
       drawLines(cubeBuffer, cubeWireVertices.length / 3, [0.3, 1.0, 0.3], mat4Translation(0, 5, 0), vp);
 
@@ -377,9 +377,9 @@
       bindBuffer(axisBuffer);
       mvp = mat4Multiply(vp, mat4Identity());
       gl.uniformMatrix4fv(uMVP, false, mvp);
-      gl.uniform3fv(uColor, [1.0, 0.0, 0.0]);
+      gl.uniform3fv(uColor, [1.0, 0.5, 0.5]);
       gl.drawArrays(gl.LINES, 4, 2);
-      drawLines(cubeBuffer, cubeWireVertices.length / 3, [1.0, 0.6, 0.5], mat4Translation(0, 0, 5), vp);
+      drawLines(cubeBuffer, cubeWireVertices.length / 3, [1.0, 0.5, 0.5], mat4Translation(0, 0, 5), vp);
 
       hud.textContent =
         `Roll  ${camera.roll.toFixed(1)}\n` +
