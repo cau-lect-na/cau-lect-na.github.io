@@ -201,6 +201,37 @@
       return buffer;
     }
 
+    // Box
+    function createBox(width, height, depth) {
+    const w = width / 2, h = height / 2, d = depth / 2;
+
+  return new Float32Array([
+    // front
+    -w,-h, d,  w,-h, d,  w, h, d,
+    -w,-h, d,  w, h, d, -w, h, d,
+
+    // back
+    -w,-h,-d, -w, h,-d,  w, h,-d,
+    -w,-h,-d,  w, h,-d,  w,-h,-d,
+
+    // left
+    -w,-h,-d, -w,-h, d, -w, h, d,
+    -w,-h,-d, -w, h, d, -w, h,-d,
+
+    // right
+     w,-h,-d,  w, h,-d,  w, h, d,
+     w,-h,-d,  w, h, d,  w,-h, d,
+
+    // top
+    -w, h,-d, -w, h, d,  w, h, d,
+    -w, h,-d,  w, h, d,  w, h,-d,
+
+    // bottom
+    -w,-h,-d,  w,-h,-d,  w,-h, d,
+    -w,-h,-d,  w,-h, d, -w,-h, d,
+  ]);
+}
+
     // Wire cube edges, size 1 centered at origin
     const cubeWireVertices = [
       // front square
