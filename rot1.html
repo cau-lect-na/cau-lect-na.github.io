@@ -433,7 +433,7 @@
       const vp = mat4Multiply(proj, view);
 
       // origin cube
-      drawLines(cubeBuffer, cubeVertexCount, [0.65, 0.65, 0.65], mat4Identity(), vp);
+      drawLines(cubeBuffer, cubeVertexCount, [0.85, 0.85, 0.85], mat4Identity(), vp);
 
       // X axis (blue): +Z axis mesh rotated to +X
       drawAxis([0.2, 0.5, 1.0], mat4RotationY(Math.PI / 2), vp);
@@ -445,9 +445,9 @@
       drawAxis([1.0, 0.3, 0.3], mat4Identity(), vp);
 
       // axis end cubes
-      drawLines(cubeBuffer, cubeVertexCount, [0.2, 0.5, 1.0], mat4Translation(5, 0, 0), vp);
-      drawLines(cubeBuffer, cubeVertexCount, [0.2, 1.0, 0.3], mat4Translation(0, 5, 0), vp);
-      drawLines(cubeBuffer, cubeVertexCount, [1.0, 0.3, 0.3], mat4Translation(0, 0, 5), vp);
+      //drawLines(cubeBuffer, cubeVertexCount, [0.2, 0.5, 1.0], mat4Translation(5, 0, 0), vp);
+      //drawLines(cubeBuffer, cubeVertexCount, [0.2, 1.0, 0.3], mat4Translation(0, 5, 0), vp);
+      //drawLines(cubeBuffer, cubeVertexCount, [1.0, 0.3, 0.3], mat4Translation(0, 0, 5), vp);
 
       hud.textContent =
         `Roll  ${camera.roll.toFixed(1)}\n` +
