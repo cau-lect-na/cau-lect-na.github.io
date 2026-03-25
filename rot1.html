@@ -203,34 +203,53 @@
 
     // Box
     function createBox(width, height, depth) {
-    const w = width / 2, h = height / 2, d = depth / 2;
+      const w = width / 2, h = height / 2, d = depth / 2;
 
-  return new Float32Array([
-    // front
-    -w,-h, d,  w,-h, d,  w, h, d,
-    -w,-h, d,  w, h, d, -w, h, d,
+      return new Float32Array([
+        // front
+        -w,-h, d,  w,-h, d,  w, h, d,
+        -w,-h, d,  w, h, d, -w, h, d,
+        // back
+        -w,-h,-d, -w, h,-d,  w, h,-d,
+        -w,-h,-d,  w, h,-d,  w,-h,-d,
+        // left
+        -w,-h,-d, -w,-h, d, -w, h, d,
+        -w,-h,-d, -w, h, d, -w, h,-d,
+        // right
+         w,-h,-d,  w, h,-d,  w, h, d,
+         w,-h,-d,  w, h, d,  w,-h, d,
+        // top
+        -w, h,-d, -w, h, d,  w, h, d,
+        -w, h,-d,  w, h, d,  w, h,-d,
+        // bottom
+        -w,-h,-d,  w,-h,-d,  w,-h, d,
+        -w,-h,-d,  w,-h, d, -w,-h, d,
+      ]);
+    }
 
-    // back
-    -w,-h,-d, -w, h,-d,  w, h,-d,
-    -w,-h,-d,  w, h,-d,  w,-h,-d,
+    // Cone
+    function createCone(radius, height, segments = 16) {
+      const verts = [];
 
-    // left
-    -w,-h,-d, -w,-h, d, -w, h, d,
-    -w,-h,-d, -w, h, d, -w, h,-d,
+      for (let i = 0; i < segments; i++) {
+        const a = (i / segments) * Math.PI * 2;
+        const b = ((i + 1) / segments) * Math.PI * 2;
 
-    // right
-     w,-h,-d,  w, h,-d,  w, h, d,
-     w,-h,-d,  w, h, d,  w,-h, d,
+        const x1 = Math.cos(a) * radius;
+        const z1 = Math.sin(a) * radius;
+        const x2 = Math.cos(b) * radius;
+        const z2 = Math.sin(b) * radius;
 
-    // top
-    -w, h,-d, -w, h, d,  w, h, d,
-    -w, h,-d,  w, h, d,  w, h,-d,
+        // side triangle
+        verts.push(
+          0, height, 0,
+          x1, 0, z1,
+          x2, 0, z2
+        );
+      }
 
-    // bottom
-    -w,-h,-d,  w,-h,-d,  w,-h, d,
-    -w,-h,-d,  w,-h, d, -w,-h, d,
-  ]);
-}
+      return new Float32Array(verts);
+    }
 
     // Wire cube edges, size 1 centered at origin
     const cubeWireVertices = [
@@ -261,6 +280,9 @@
 
     const cubeBuffer = createBuffer(cubeWireVertices);
     const axisBuffer = createBuffer(axisVertices);
+
+    const axisBox = createBuffer(createBox(0.1, 0.1, 5));
+    const cone = createBuffer(createCone(0.25, 0.7));
 
     function bindBuffer(buffer) {
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
@@ -375,6 +397,27 @@
       gl.drawArrays(gl.LINES, 0, vertexCount);
     }
 
+     function drawAxis(color, transform) {
+      // 막대 (box)
+      bindBuffer(axisBox);
+      let mvp = mat4Multiply(vp, transform);
+      gl.uniformMatrix4fv(uMVP, false, mvp);
+      gl.uniform3fv(uColor, color);
+      gl.drawArrays(gl.TRIANGLES, 0, 36);
+
+      // 원뿔 (끝)
+      bindBuffer(cone);
+
+      const coneTransform = mat4Multiply(
+        transform,
+        mat4Translation(0, 0, 2.5) // 끝으로 이동
+      );
+
+      mvp = mat4Multiply(vp, coneTransform);
+      gl.uniformMatrix4fv(uMVP, false, mvp);
+      gl.drawArrays(gl.TRIANGLES, 0, coneVertexCount);
+    }
+
     function render() {
       resize();
 
@@ -391,10 +434,13 @@
       // origin cube (gray)
       drawLines(cubeBuffer, cubeWireVertices.length / 3, [0.6, 0.6, 0.6], mat4Identity(), vp);
 
+      
       // x axis + cube at end (blue)
-      drawLines(axisBuffer, 2, [0.5, 0.5, 1.0], mat4Identity(), vp);
-      drawLines(cubeBuffer, cubeWireVertices.length / 3, [0.5, 0.5, 1.0], mat4Translation(5, 0, 0), vp);
-
+      //drawLines(axisBuffer, 2, [0.5, 0.5, 1.0], mat4Identity(), vp);
+      //drawLines(cubeBuffer, cubeWireVertices.length / 3, [0.5, 0.5, 1.0], mat4Translation(5, 0, 0), vp);
+      let modelX = mat4Multiply(mat4RotationY(Math.PI / 2), mat4Identity());
+      drawAxis([0,0,1], modelX);
+      
       // y axis + cube at end (green)
       drawLines(axisBuffer, 4, [0.3, 1.0, 0.3], mat4Identity(), vp); // uses first 4 vertices, but we'll redraw only needed below
       bindBuffer(axisBuffer);
