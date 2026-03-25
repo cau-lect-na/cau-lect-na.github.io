@@ -240,9 +240,10 @@
     // ===== Camera / controls =====
     const CAMERA_X_DELTA = 5;
     const CAMERA_Y_DELTA = 5;
-    const CAMERA_Z_DELTA = 1;
+    const CAMERA_Z_DELTA = 5;
     const CAMERA_Z_MIN = 5;
     const CAMERA_Z_MAX = 100;
+    const MOVE_Z_DELTA = 1;
 
     const camera = {
       pos: [0, 0, 20],
@@ -272,11 +273,11 @@
           resetCameraAngles();
           break;
         case "KeyA":
-          camera.pos[2] -= CAMERA_Z_DELTA;
+          camera.pos[2] -= MOVE_Z_DELTA;
           if (camera.pos[2] < CAMERA_Z_MIN) camera.pos[2] = CAMERA_Z_MIN;
           break;
         case "KeyZ":
-          camera.pos[2] += CAMERA_Z_DELTA;
+          camera.pos[2] += MOVE_Z_DELTA;
           if (camera.pos[2] > CAMERA_Z_MAX) camera.pos[2] = CAMERA_Z_MAX;
           break;
         case "ArrowUp":
