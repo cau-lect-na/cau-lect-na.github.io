@@ -305,10 +305,10 @@
         }
         spot = 1.0;
 
-        float diff = max(dot(N, L), 0.0) * spot;
+        float diff = max(dot(N, L), 0.0);// * spot;
         float spec = 0.0;
         if (diff > 0.0) {
-          spec = pow(max(dot(V, R), 0.0), uShininess) * spot;
+          spec = pow(max(dot(V, R), 0.0), uShininess);// * spot;
         }
 
         vec3 ambient = 0.10 * uBaseColor;
