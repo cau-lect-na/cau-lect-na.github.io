@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>WebGL Cube Rotation - Quaternion</title>
+  <title>WebGL Cube Rotation - Quaternion Trackball</title>
   <style>
     html, body {
       margin: 0;
@@ -51,8 +51,6 @@
     let mouseButtonPressed = false;
     let oldMousePosX = 0;
     let oldMousePosY = 0;
-    let currentMousePosX = 0;
-    let currentMousePosY = 0;
 
     const diffuseLight = [0.8, 0.8, 0.8];
     const specularLight = [1.0, 1.0, 1.0];
@@ -61,13 +59,25 @@
     // quaternion: [x, y, z, w]
     let orientation = quatIdentity();
 
-    function degToRad(d) {
-      return d * Math.PI / 180;
+    function clamp(v, lo, hi) {
+      return Math.max(lo, Math.min(hi, v));
     }
 
     function normalize3(v) {
       const len = Math.hypot(v[0], v[1], v[2]) || 1;
       return [v[0] / len, v[1] / len, v[2] / len];
+    }
+
+    function dot3(a, b) {
+      return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    }
+
+    function cross3(a, b) {
+      return [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0]
+      ];
     }
 
     function mat4Identity() {
@@ -121,7 +131,7 @@
       ]);
     }
 
-    // ===== Quaternion helpers =====
+    // ===== Quaternion =====
     function quatIdentity() {
       return [0, 0, 0, 1];
     }
@@ -169,6 +179,57 @@
         xz + wy,        yz - wx,        1 - (xx + yy),  0,
         0,              0,              0,              1
       ]);
+    }
+
+    // ===== Trackball =====
+    function projectToTrackball(clientX, clientY) {
+      const rect = canvas.getBoundingClientRect();
+
+      // canvas 중심 기준, [-1,1] 범위
+      let x = (2 * (clientX - rect.left) / rect.width) - 1;
+      let y = 1 - (2 * (clientY - rect.top) / rect.height);
+
+      // 정사각형이 아니어도 비율 맞추기
+      const aspect = rect.width / rect.height;
+      if (aspect > 1) {
+        x *= aspect;
+      } else {
+        y /= aspect;
+      }
+
+      const r2 = x * x + y * y;
+      let z;
+
+      // trackball + hyperbolic sheet 혼합
+      if (r2 <= 1.0) {
+        z = Math.sqrt(1.0 - r2);
+      } else {
+        const len = Math.sqrt(r2);
+        x /= len;
+        y /= len;
+        z = 0.0;
+      }
+
+      return normalize3([x, y, z]);
+    }
+
+    function applyTrackballDrag(x0, y0, x1, y1) {
+      const vFrom = projectToTrackball(x0, y0);
+      const vTo = projectToTrackball(x1, y1);
+
+      const axis = cross3(vFrom, vTo);
+      const axisLen = Math.hypot(axis[0], axis[1], axis[2]);
+
+      if (axisLen < 1e-6) return;
+
+      const dot = clamp(dot3(vFrom, vTo), -1.0, 1.0);
+      const angle = Math.acos(dot);
+
+      const dq = quatFromAxisAngle(axis, angle);
+
+      // 새 회전을 앞에 곱해 current orientation 갱신
+      orientation = quatMultiply(dq, orientation);
+      orientation = quatNormalize(orientation);
     }
 
     // ===== Shader =====
@@ -261,55 +322,42 @@
     const uViewPos = gl.getUniformLocation(program, "uViewPos");
     const uShininess = gl.getUniformLocation(program, "uShininess");
 
-    // Cube with per-face normals
     const cubePositions = new Float32Array([
-      // Front
       -1,-1, 1,   1,-1, 1,   1, 1, 1,
       -1,-1, 1,   1, 1, 1,  -1, 1, 1,
 
-      // Back
        1,-1,-1,  -1,-1,-1,  -1, 1,-1,
        1,-1,-1,  -1, 1,-1,   1, 1,-1,
 
-      // Left
       -1,-1,-1,  -1,-1, 1,  -1, 1, 1,
       -1,-1,-1,  -1, 1, 1,  -1, 1,-1,
 
-      // Right
        1,-1, 1,   1,-1,-1,   1, 1,-1,
        1,-1, 1,   1, 1,-1,   1, 1, 1,
 
-      // Top
       -1, 1, 1,   1, 1, 1,   1, 1,-1,
       -1, 1, 1,   1, 1,-1,  -1, 1,-1,
 
-      // Bottom
       -1,-1,-1,   1,-1,-1,   1,-1, 1,
       -1,-1,-1,   1,-1, 1,  -1,-1, 1
     ]);
 
     const cubeNormals = new Float32Array([
-      // Front
        0, 0, 1,   0, 0, 1,   0, 0, 1,
        0, 0, 1,   0, 0, 1,   0, 0, 1,
 
-      // Back
        0, 0,-1,   0, 0,-1,   0, 0,-1,
        0, 0,-1,   0, 0,-1,   0, 0,-1,
 
-      // Left
       -1, 0, 0,  -1, 0, 0,  -1, 0, 0,
       -1, 0, 0,  -1, 0, 0,  -1, 0, 0,
 
-      // Right
        1, 0, 0,   1, 0, 0,   1, 0, 0,
        1, 0, 0,   1, 0, 0,   1, 0, 0,
 
-      // Top
        0, 1, 0,   0, 1, 0,   0, 1, 0,
        0, 1, 0,   0, 1, 0,   0, 1, 0,
 
-      // Bottom
        0,-1, 0,   0,-1, 0,   0,-1, 0,
        0,-1, 0,   0,-1, 0,   0,-1, 0
     ]);
@@ -352,9 +400,8 @@
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
       const aspect = canvas.width / canvas.height;
-      const proj = mat4Perspective(degToRad(45), aspect, 0.1, 1000.0);
+      const proj = mat4Perspective(Math.PI / 4, aspect, 0.1, 1000.0);
 
-      // model = translate(0, 0, -5) * rotationFromQuaternion
       let model = mat4Identity();
       model = mat4Multiply(model, mat4Translation(0, 0, -5));
       model = mat4Multiply(model, quatToMat4(orientation));
@@ -379,7 +426,7 @@
       gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
 
       hud.textContent =
-        `Quaternion\n` +
+        `Trackball Quaternion\n` +
         `x: ${orientation[0].toFixed(4)}\n` +
         `y: ${orientation[1].toFixed(4)}\n` +
         `z: ${orientation[2].toFixed(4)}\n` +
@@ -392,8 +439,8 @@
     canvas.addEventListener("mousedown", (e) => {
       if (e.button !== 0) return;
       mouseButtonPressed = true;
-      oldMousePosX = currentMousePosX = e.clientX;
-      oldMousePosY = currentMousePosY = e.clientY;
+      oldMousePosX = e.clientX;
+      oldMousePosY = e.clientY;
     });
 
     window.addEventListener("mouseup", () => {
@@ -401,32 +448,11 @@
     });
 
     window.addEventListener("mousemove", (e) => {
-      currentMousePosX = e.clientX;
-      currentMousePosY = e.clientY;
-
       if (mouseButtonPressed) {
-        const dx = currentMousePosX - oldMousePosX;
-        const dy = currentMousePosY - oldMousePosY;
-
-        // drag sensitivity
-        const sx = degToRad(dx * 0.5);
-        const sy = degToRad(dy * 0.5);
-
-        // world Y axis for horizontal drag
-        const qYaw = quatFromAxisAngle([0, 1, 0], sx);
-
-        // local X axis for vertical drag
-        const qPitch = quatFromAxisAngle([1, 0, 0], sy);
-
-        // apply incremental rotations
-        // orientation = qYaw * orientation * qPitch
-        orientation = quatMultiply(qYaw, orientation);
-        orientation = quatMultiply(orientation, qPitch);
-        orientation = quatNormalize(orientation);
+        applyTrackballDrag(oldMousePosX, oldMousePosY, e.clientX, e.clientY);
+        oldMousePosX = e.clientX;
+        oldMousePosY = e.clientY;
       }
-
-      oldMousePosX = currentMousePosX;
-      oldMousePosY = currentMousePosY;
     });
 
     render();
