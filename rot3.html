@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>WebGL Cube Rotation - Quaternion</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: Arial, sans-serif;
+    }
+    #glcanvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+    #hud {
+      position: fixed;
+      left: 16px;
+      top: 16px;
+      color: white;
+      background: rgba(0, 0, 0, 0.45);
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 16px;
+      line-height: 1.5;
+      white-space: pre-line;
+      user-select: none;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="glcanvas"></canvas>
+  <div id="hud"></div>
+
+  <script>
+    const canvas = document.getElementById("glcanvas");
+    const gl = canvas.getContext("webgl");
+    const hud = document.getElementById("hud");
+
+    if (!gl) {
+      alert("WebGL is not supported.");
+      throw new Error("WebGL unavailable");
+    }
+
+    let mouseButtonPressed = false;
+    let oldMousePosX = 0;
+    let oldMousePosY = 0;
+    let currentMousePosX = 0;
+    let currentMousePosY = 0;
+
+    const diffuseLight = [0.8, 0.8, 0.8];
+    const specularLight = [1.0, 1.0, 1.0];
+    const lightDirWorld = normalize3([0.5, 0.8, 1.0]);
+
+    // quaternion: [x, y, z, w]
+    let orientation = quatIdentity();
+
+    function degToRad(d) {
+      return d * Math.PI / 180;
+    }
+
+    function normalize3(v) {
+      const len = Math.hypot(v[0], v[1], v[2]) || 1;
+      return [v[0] / len, v[1] / len, v[2] / len];
+    }
+
+    function mat4Identity() {
+      return new Float32Array([
+        1,0,0,0,
+        0,1,0,0,
+        0,0,1,0,
+        0,0,0,1
+      ]);
+    }
+
+    function mat4Multiply(a, b) {
+      const out = new Float32Array(16);
+      for (let c = 0; c < 4; c++) {
+        for (let r = 0; r < 4; r++) {
+          out[c * 4 + r] =
+            a[0 * 4 + r] * b[c * 4 + 0] +
+            a[1 * 4 + r] * b[c * 4 + 1] +
+            a[2 * 4 + r] * b[c * 4 + 2] +
+            a[3 * 4 + r] * b[c * 4 + 3];
+        }
+      }
+      return out;
+    }
+
+    function mat4Translation(x, y, z) {
+      const m = mat4Identity();
+      m[12] = x;
+      m[13] = y;
+      m[14] = z;
+      return m;
+    }
+
+    function mat4Perspective(fovyRad, aspect, near, far) {
+      const f = 1.0 / Math.tan(fovyRad / 2);
+      const nf = 1 / (near - far);
+      const out = new Float32Array(16);
+      out[0] = f / aspect;
+      out[5] = f;
+      out[10] = (far + near) * nf;
+      out[11] = -1;
+      out[14] = (2 * far * near) * nf;
+      return out;
+    }
+
+    function mat3FromMat4(m) {
+      return new Float32Array([
+        m[0], m[1], m[2],
+        m[4], m[5], m[6],
+        m[8], m[9], m[10]
+      ]);
+    }
+
+    // ===== Quaternion helpers =====
+    function quatIdentity() {
+      return [0, 0, 0, 1];
+    }
+
+    function quatNormalize(q) {
+      const len = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
+      return [q[0] / len, q[1] / len, q[2] / len, q[3] / len];
+    }
+
+    function quatMultiply(a, b) {
+      const ax = a[0], ay = a[1], az = a[2], aw = a[3];
+      const bx = b[0], by = b[1], bz = b[2], bw = b[3];
+
+      return [
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+        aw * bw - ax * bx - ay * by - az * bz
+      ];
+    }
+
+    function quatFromAxisAngle(axis, angleRad) {
+      const n = normalize3(axis);
+      const half = angleRad * 0.5;
+      const s = Math.sin(half);
+      return quatNormalize([
+        n[0] * s,
+        n[1] * s,
+        n[2] * s,
+        Math.cos(half)
+      ]);
+    }
+
+    function quatToMat4(q) {
+      const x = q[0], y = q[1], z = q[2], w = q[3];
+
+      const x2 = x + x, y2 = y + y, z2 = z + z;
+      const xx = x * x2, yy = y * y2, zz = z * z2;
+      const xy = x * y2, xz = x * z2, yz = y * z2;
+      const wx = w * x2, wy = w * y2, wz = w * z2;
+
+      return new Float32Array([
+        1 - (yy + zz),  xy + wz,        xz - wy,        0,
+        xy - wz,        1 - (xx + zz),  yz + wx,        0,
+        xz + wy,        yz - wx,        1 - (xx + yy),  0,
+        0,              0,              0,              1
+      ]);
+    }
+
+    // ===== Shader =====
+    const vsSource = `
+      attribute vec3 aPosition;
+      attribute vec3 aNormal;
+
+      uniform mat4 uMVP;
+      uniform mat4 uModel;
+      uniform mat3 uNormalMatrix;
+
+      varying vec3 vNormal;
+      varying vec3 vWorldPos;
+
+      void main() {
+        vec4 worldPos = uModel * vec4(aPosition, 1.0);
+        gl_Position = uMVP * vec4(aPosition, 1.0);
+        vWorldPos = worldPos.xyz;
+        vNormal = normalize(uNormalMatrix * aNormal);
+      }
+    `;
+
+    const fsSource = `
+      precision mediump float;
+
+      varying vec3 vNormal;
+      varying vec3 vWorldPos;
+
+      uniform vec3 uBaseColor;
+      uniform vec3 uLightDir;
+      uniform vec3 uDiffuseLight;
+      uniform vec3 uSpecularLight;
+      uniform vec3 uViewPos;
+      uniform float uShininess;
+
+      void main() {
+        vec3 N = normalize(vNormal);
+        vec3 L = normalize(uLightDir);
+        vec3 V = normalize(uViewPos - vWorldPos);
+        vec3 R = reflect(-L, N);
+
+        float diff = max(dot(N, L), 0.0);
+        float spec = 0.0;
+        if (diff > 0.0) {
+          spec = pow(max(dot(V, R), 0.0), uShininess);
+        }
+
+        vec3 ambient = 0.15 * uBaseColor;
+        vec3 diffuse = diff * uDiffuseLight * uBaseColor;
+        vec3 specular = spec * 0.35 * uSpecularLight;
+
+        gl_FragColor = vec4(ambient + diffuse + specular, 1.0);
+      }
+    `;
+
+    function compileShader(type, source) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        throw new Error(gl.getShaderInfoLog(shader));
+      }
+      return shader;
+    }
+
+    function createProgram(vsSource, fsSource) {
+      const program = gl.createProgram();
+      gl.attachShader(program, compileShader(gl.VERTEX_SHADER, vsSource));
+      gl.attachShader(program, compileShader(gl.FRAGMENT_SHADER, fsSource));
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        throw new Error(gl.getProgramInfoLog(program));
+      }
+      return program;
+    }
+
+    const program = createProgram(vsSource, fsSource);
+    gl.useProgram(program);
+
+    const aPosition = gl.getAttribLocation(program, "aPosition");
+    const aNormal = gl.getAttribLocation(program, "aNormal");
+
+    const uMVP = gl.getUniformLocation(program, "uMVP");
+    const uModel = gl.getUniformLocation(program, "uModel");
+    const uNormalMatrix = gl.getUniformLocation(program, "uNormalMatrix");
+    const uBaseColor = gl.getUniformLocation(program, "uBaseColor");
+    const uLightDir = gl.getUniformLocation(program, "uLightDir");
+    const uDiffuseLight = gl.getUniformLocation(program, "uDiffuseLight");
+    const uSpecularLight = gl.getUniformLocation(program, "uSpecularLight");
+    const uViewPos = gl.getUniformLocation(program, "uViewPos");
+    const uShininess = gl.getUniformLocation(program, "uShininess");
+
+    // Cube with per-face normals
+    const cubePositions = new Float32Array([
+      // Front
+      -1,-1, 1,   1,-1, 1,   1, 1, 1,
+      -1,-1, 1,   1, 1, 1,  -1, 1, 1,
+
+      // Back
+       1,-1,-1,  -1,-1,-1,  -1, 1,-1,
+       1,-1,-1,  -1, 1,-1,   1, 1,-1,
+
+      // Left
+      -1,-1,-1,  -1,-1, 1,  -1, 1, 1,
+      -1,-1,-1,  -1, 1, 1,  -1, 1,-1,
+
+      // Right
+       1,-1, 1,   1,-1,-1,   1, 1,-1,
+       1,-1, 1,   1, 1,-1,   1, 1, 1,
+
+      // Top
+      -1, 1, 1,   1, 1, 1,   1, 1,-1,
+      -1, 1, 1,   1, 1,-1,  -1, 1,-1,
+
+      // Bottom
+      -1,-1,-1,   1,-1,-1,   1,-1, 1,
+      -1,-1,-1,   1,-1, 1,  -1,-1, 1
+    ]);
+
+    const cubeNormals = new Float32Array([
+      // Front
+       0, 0, 1,   0, 0, 1,   0, 0, 1,
+       0, 0, 1,   0, 0, 1,   0, 0, 1,
+
+      // Back
+       0, 0,-1,   0, 0,-1,   0, 0,-1,
+       0, 0,-1,   0, 0,-1,   0, 0,-1,
+
+      // Left
+      -1, 0, 0,  -1, 0, 0,  -1, 0, 0,
+      -1, 0, 0,  -1, 0, 0,  -1, 0, 0,
+
+      // Right
+       1, 0, 0,   1, 0, 0,   1, 0, 0,
+       1, 0, 0,   1, 0, 0,   1, 0, 0,
+
+      // Top
+       0, 1, 0,   0, 1, 0,   0, 1, 0,
+       0, 1, 0,   0, 1, 0,   0, 1, 0,
+
+      // Bottom
+       0,-1, 0,   0,-1, 0,   0,-1, 0,
+       0,-1, 0,   0,-1, 0,   0,-1, 0
+    ]);
+
+    function createArrayBuffer(data) {
+      const buffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+      return buffer;
+    }
+
+    const positionBuffer = createArrayBuffer(cubePositions);
+    const normalBuffer = createArrayBuffer(cubeNormals);
+    const vertexCount = cubePositions.length / 3;
+
+    function bindAttribute(buffer, attribLocation, size) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.enableVertexAttribArray(attribLocation);
+      gl.vertexAttribPointer(attribLocation, size, gl.FLOAT, false, 0, 0);
+    }
+
+    function resize() {
+      const dpr = window.devicePixelRatio || 1;
+      const width = Math.floor(canvas.clientWidth * dpr);
+      const height = Math.floor(canvas.clientHeight * dpr);
+
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+
+    function render() {
+      resize();
+
+      gl.clearColor(0, 0, 0, 1);
+      gl.enable(gl.DEPTH_TEST);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      const aspect = canvas.width / canvas.height;
+      const proj = mat4Perspective(degToRad(45), aspect, 0.1, 1000.0);
+
+      // model = translate(0, 0, -5) * rotationFromQuaternion
+      let model = mat4Identity();
+      model = mat4Multiply(model, mat4Translation(0, 0, -5));
+      model = mat4Multiply(model, quatToMat4(orientation));
+
+      const mvp = mat4Multiply(proj, model);
+      const normalMatrix = mat3FromMat4(model);
+
+      bindAttribute(positionBuffer, aPosition, 3);
+      bindAttribute(normalBuffer, aNormal, 3);
+
+      gl.uniformMatrix4fv(uMVP, false, mvp);
+      gl.uniformMatrix4fv(uModel, false, model);
+      gl.uniformMatrix3fv(uNormalMatrix, false, normalMatrix);
+
+      gl.uniform3fv(uBaseColor, new Float32Array([1, 1, 1]));
+      gl.uniform3fv(uLightDir, new Float32Array(lightDirWorld));
+      gl.uniform3fv(uDiffuseLight, new Float32Array(diffuseLight));
+      gl.uniform3fv(uSpecularLight, new Float32Array(specularLight));
+      gl.uniform3fv(uViewPos, new Float32Array([0, 0, 0]));
+      gl.uniform1f(uShininess, 128.0);
+
+      gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
+
+      hud.textContent =
+        `Quaternion\n` +
+        `x: ${orientation[0].toFixed(4)}\n` +
+        `y: ${orientation[1].toFixed(4)}\n` +
+        `z: ${orientation[2].toFixed(4)}\n` +
+        `w: ${orientation[3].toFixed(4)}\n` +
+        `\nDrag: mouse left button`;
+
+      requestAnimationFrame(render);
+    }
+
+    canvas.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      mouseButtonPressed = true;
+      oldMousePosX = currentMousePosX = e.clientX;
+      oldMousePosY = currentMousePosY = e.clientY;
+    });
+
+    window.addEventListener("mouseup", () => {
+      mouseButtonPressed = false;
+    });
+
+    window.addEventListener("mousemove", (e) => {
+      currentMousePosX = e.clientX;
+      currentMousePosY = e.clientY;
+
+      if (mouseButtonPressed) {
+        const dx = currentMousePosX - oldMousePosX;
+        const dy = currentMousePosY - oldMousePosY;
+
+        // drag sensitivity
+        const sx = degToRad(-dx * 0.5);
+        const sy = degToRad(-dy * 0.5);
+
+        // world Y axis for horizontal drag
+        const qYaw = quatFromAxisAngle([0, 1, 0], sx);
+
+        // local X axis for vertical drag
+        const qPitch = quatFromAxisAngle([1, 0, 0], sy);
+
+        // apply incremental rotations
+        // orientation = qYaw * orientation * qPitch
+        orientation = quatMultiply(qYaw, orientation);
+        orientation = quatMultiply(orientation, qPitch);
+        orientation = quatNormalize(orientation);
+      }
+
+      oldMousePosX = currentMousePosX;
+      oldMousePosY = currentMousePosY;
+    });
+
+    render();
+  </script>
+</body>
+</html>
