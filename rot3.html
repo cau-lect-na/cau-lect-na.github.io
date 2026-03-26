@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>WebGL Cube Rotation - Quaternion Trackball</title>
+  <title>Trackball Demo - WebGL</title>
   <style>
     html, body {
       margin: 0;
@@ -26,8 +26,8 @@
       background: rgba(0, 0, 0, 0.45);
       padding: 10px 12px;
       border-radius: 8px;
-      font-size: 16px;
-      line-height: 1.5;
+      font-size: 15px;
+      line-height: 1.45;
       white-space: pre-line;
       user-select: none;
       z-index: 10;
@@ -48,36 +48,160 @@
       throw new Error("WebGL unavailable");
     }
 
-    let mouseButtonPressed = false;
-    let oldMousePosX = 0;
-    let oldMousePosY = 0;
+    // Original light setup
+    const diffuseLight = [0.8, 0.8, 0.8, 1.0];
+    const specularLight = [1.0, 1.0, 1.0, 1.0];
+    const lightPosition = [1.0, 0.0, 8.0, 1.0];
 
-    const diffuseLight = [0.8, 0.8, 0.8];
-    const specularLight = [1.0, 1.0, 1.0];
-    const lightDirWorld = normalize3([0.5, 0.8, 1.0]);
+    // Trackball constants / state
+    const TRACKBALL_SIZE = 0.7;
+    let gWidth = 1;
+    let gHeight = 1;
 
-    // quaternion: [x, y, z, w]
-    let orientation = quatIdentity();
+    let isMouseActive = false;
+    let oldMousePos = { x: 0, y: 0 };
+    let currentMousePos = { x: 0, y: 0 };
+
+    // curquat / lastquat like original
+    let curquat = quatIdentity();
+    let lastquat = quatIdentity();
 
     function clamp(v, lo, hi) {
       return Math.max(lo, Math.min(hi, v));
     }
 
-    function normalize3(v) {
-      const len = Math.hypot(v[0], v[1], v[2]) || 1;
-      return [v[0] / len, v[1] / len, v[2] / len];
+    function vec3(x = 0, y = 0, z = 0) {
+      return { x, y, z };
     }
 
-    function dot3(a, b) {
-      return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    function vecSub(a, b) {
+      return vec3(a.x - b.x, a.y - b.y, a.z - b.z);
     }
 
-    function cross3(a, b) {
-      return [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0]
-      ];
+    function vecCross(v1, v2) {
+      return vec3(
+        v1.y * v2.z - v1.z * v2.y,
+        v1.z * v2.x - v1.x * v2.z,
+        v1.x * v2.y - v1.y * v2.x
+      );
+    }
+
+    function vecLength(v) {
+      return Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    }
+
+    function vecNormalize(v) {
+      let len = vecLength(v);
+      if (len === 0.0) len = 1.0;
+      return vec3(v.x / len, v.y / len, v.z / len);
+    }
+
+    function quatIdentity() {
+      return { x: 0, y: 0, z: 0, w: 1 };
+    }
+
+    // Mirrors CQuaternion::CreateQuatFromAxis()
+    function createQuatFromAxis(axis, phi) {
+      const a = vecNormalize(axis);
+      const half = phi * 0.5;
+      const sine = Math.sin(half);
+      return {
+        x: a.x * sine,
+        y: a.y * sine,
+        z: a.z * sine,
+        w: Math.cos(half)
+      };
+    }
+
+    // Mirrors CQuaternion::operator+()
+    function quatAddStyle(a, q) {
+      const v1 = vec3(a.x, a.y, a.z);
+      const v2 = vec3(q.x, q.y, q.z);
+
+      // cross.CrossProduct(v2, v1)
+      const cross = vecCross(v2, v1);
+
+      const scaledV1 = vec3(v1.x * q.w, v1.y * q.w, v1.z * q.w);
+      const scaledV2 = vec3(v2.x * a.w, v2.y * a.w, v2.z * a.w);
+
+      const v3 = vec3(
+        cross.x + scaledV1.x + scaledV2.x,
+        cross.y + scaledV1.y + scaledV2.y,
+        cross.z + scaledV1.z + scaledV2.z
+      );
+
+      return {
+        x: v3.x,
+        y: v3.y,
+        z: v3.z,
+        w: a.w * q.w - (a.x * q.x + a.y * q.y + a.z * q.z)
+      };
+    }
+
+    function quatNormalize(q) {
+      let len = Math.sqrt(q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w);
+      if (len === 0.0) len = 1.0;
+      return {
+        x: q.x / len,
+        y: q.y / len,
+        z: q.z / len,
+        w: q.w / len
+      };
+    }
+
+    // Mirrors CQuaternion::CreateMatrix()
+    function quatCreateMatrix(q) {
+      return new Float32Array([
+        1.0 - 2.0 * (q.y * q.y + q.z * q.z),
+        2.0 * (q.x * q.y - q.z * q.w),
+        2.0 * (q.z * q.x + q.y * q.w),
+        0.0,
+
+        2.0 * (q.x * q.y + q.z * q.w),
+        1.0 - 2.0 * (q.z * q.z + q.x * q.x),
+        2.0 * (q.y * q.z - q.x * q.w),
+        0.0,
+
+        2.0 * (q.z * q.x - q.y * q.w),
+        2.0 * (q.y * q.z + q.x * q.w),
+        1.0 - 2.0 * (q.y * q.y + q.x * q.x),
+        0.0,
+
+        0.0, 0.0, 0.0, 1.0
+      ]);
+    }
+
+    // Mirrors CTrackball::ProjectPointToSphere()
+    function projectPointToSphere(radius, x, y) {
+      const length = Math.sqrt(x * x + y * y);
+      let z = 0.0;
+
+      if (length < radius * 0.70710678118654752440) {
+        z = Math.sqrt(radius * radius - length * length);
+      } else {
+        radius = radius / 1.41421356237309504880;
+        z = radius * radius / length;
+      }
+      return z;
+    }
+
+    // Mirrors CTrackball::CalcTrackball()
+    function calcTrackball(x1, y1, x2, y2) {
+      const p1 = vec3(x1, y1, projectPointToSphere(TRACKBALL_SIZE, x1, y1));
+      const p2 = vec3(x2, y2, projectPointToSphere(TRACKBALL_SIZE, x2, y2));
+
+      const difference = vecSub(p1, p2);
+      let length = vecLength(difference) / (2.0 * TRACKBALL_SIZE);
+
+      if (length > 1.0) length = 1.0;
+      if (length < -1.0) length = -1.0;
+
+      const phi = 2.0 * Math.asin(length);
+
+      // axis.CrossProduct(p2, p1)
+      const axis = vecCross(p2, p1);
+
+      return createQuatFromAxis(axis, phi);
     }
 
     function mat4Identity() {
@@ -131,108 +255,6 @@
       ]);
     }
 
-    // ===== Quaternion =====
-    function quatIdentity() {
-      return [0, 0, 0, 1];
-    }
-
-    function quatNormalize(q) {
-      const len = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
-      return [q[0] / len, q[1] / len, q[2] / len, q[3] / len];
-    }
-
-    function quatMultiply(a, b) {
-      const ax = a[0], ay = a[1], az = a[2], aw = a[3];
-      const bx = b[0], by = b[1], bz = b[2], bw = b[3];
-
-      return [
-        aw * bx + ax * bw + ay * bz - az * by,
-        aw * by - ax * bz + ay * bw + az * bx,
-        aw * bz + ax * by - ay * bx + az * bw,
-        aw * bw - ax * bx - ay * by - az * bz
-      ];
-    }
-
-    function quatFromAxisAngle(axis, angleRad) {
-      const n = normalize3(axis);
-      const half = angleRad * 0.5;
-      const s = Math.sin(half);
-      return quatNormalize([
-        n[0] * s,
-        n[1] * s,
-        n[2] * s,
-        Math.cos(half)
-      ]);
-    }
-
-    function quatToMat4(q) {
-      const x = q[0], y = q[1], z = q[2], w = q[3];
-
-      const x2 = x + x, y2 = y + y, z2 = z + z;
-      const xx = x * x2, yy = y * y2, zz = z * z2;
-      const xy = x * y2, xz = x * z2, yz = y * z2;
-      const wx = w * x2, wy = w * y2, wz = w * z2;
-
-      return new Float32Array([
-        1 - (yy + zz),  xy + wz,        xz - wy,        0,
-        xy - wz,        1 - (xx + zz),  yz + wx,        0,
-        xz + wy,        yz - wx,        1 - (xx + yy),  0,
-        0,              0,              0,              1
-      ]);
-    }
-
-    // ===== Trackball =====
-    function projectToTrackball(clientX, clientY) {
-      const rect = canvas.getBoundingClientRect();
-
-      // canvas 중심 기준, [-1,1] 범위
-      let x = (2 * (clientX - rect.left) / rect.width) - 1;
-      let y = 1 - (2 * (clientY - rect.top) / rect.height);
-
-      // 정사각형이 아니어도 비율 맞추기
-      const aspect = rect.width / rect.height;
-      if (aspect > 1) {
-        x *= aspect;
-      } else {
-        y /= aspect;
-      }
-
-      const r2 = x * x + y * y;
-      let z;
-
-      // trackball + hyperbolic sheet 혼합
-      if (r2 <= 1.0) {
-        z = Math.sqrt(1.0 - r2);
-      } else {
-        const len = Math.sqrt(r2);
-        x /= len;
-        y /= len;
-        z = 0.0;
-      }
-
-      return normalize3([x, y, z]);
-    }
-
-    function applyTrackballDrag(x0, y0, x1, y1) {
-      const vFrom = projectToTrackball(x0, y0);
-      const vTo = projectToTrackball(x1, y1);
-
-      const axis = cross3(vFrom, vTo);
-      const axisLen = Math.hypot(axis[0], axis[1], axis[2]);
-
-      if (axisLen < 1e-6) return;
-
-      const dot = clamp(dot3(vFrom, vTo), -1.0, 1.0);
-      const angle = Math.acos(dot);
-
-      const dq = quatFromAxisAngle(axis, angle);
-
-      // 새 회전을 앞에 곱해 current orientation 갱신
-      orientation = quatMultiply(dq, orientation);
-      orientation = quatNormalize(orientation);
-    }
-
-    // ===== Shader =====
     const vsSource = `
       attribute vec3 aPosition;
       attribute vec3 aNormal;
@@ -259,25 +281,36 @@
       varying vec3 vWorldPos;
 
       uniform vec3 uBaseColor;
-      uniform vec3 uLightDir;
       uniform vec3 uDiffuseLight;
       uniform vec3 uSpecularLight;
+      uniform vec3 uLightPos;
+      uniform vec3 uSpotDir;
+      uniform float uSpotCutoffCos;
+      uniform float uSpotExponent;
       uniform vec3 uViewPos;
       uniform float uShininess;
 
       void main() {
         vec3 N = normalize(vNormal);
-        vec3 L = normalize(uLightDir);
+        vec3 L = normalize(uLightPos - vWorldPos);
         vec3 V = normalize(uViewPos - vWorldPos);
         vec3 R = reflect(-L, N);
 
-        float diff = max(dot(N, L), 0.0);
-        float spec = 0.0;
-        if (diff > 0.0) {
-          spec = pow(max(dot(V, R), 0.0), uShininess);
+        vec3 lightToFrag = normalize(vWorldPos - uLightPos);
+        float spotCos = dot(lightToFrag, normalize(uSpotDir));
+        float spot = 0.0;
+
+        if (spotCos > uSpotCutoffCos) {
+          spot = pow(spotCos, uSpotExponent);
         }
 
-        vec3 ambient = 0.15 * uBaseColor;
+        float diff = max(dot(N, L), 0.0) * spot;
+        float spec = 0.0;
+        if (diff > 0.0) {
+          spec = pow(max(dot(V, R), 0.0), uShininess) * spot;
+        }
+
+        vec3 ambient = 0.10 * uBaseColor;
         vec3 diffuse = diff * uDiffuseLight * uBaseColor;
         vec3 specular = spec * 0.35 * uSpecularLight;
 
@@ -316,12 +349,16 @@
     const uModel = gl.getUniformLocation(program, "uModel");
     const uNormalMatrix = gl.getUniformLocation(program, "uNormalMatrix");
     const uBaseColor = gl.getUniformLocation(program, "uBaseColor");
-    const uLightDir = gl.getUniformLocation(program, "uLightDir");
     const uDiffuseLight = gl.getUniformLocation(program, "uDiffuseLight");
     const uSpecularLight = gl.getUniformLocation(program, "uSpecularLight");
+    const uLightPos = gl.getUniformLocation(program, "uLightPos");
+    const uSpotDir = gl.getUniformLocation(program, "uSpotDir");
+    const uSpotCutoffCos = gl.getUniformLocation(program, "uSpotCutoffCos");
+    const uSpotExponent = gl.getUniformLocation(program, "uSpotExponent");
     const uViewPos = gl.getUniformLocation(program, "uViewPos");
     const uShininess = gl.getUniformLocation(program, "uShininess");
 
+    // glutSolidCube(2.0f) equivalent
     const cubePositions = new Float32Array([
       -1,-1, 1,   1,-1, 1,   1, 1, 1,
       -1,-1, 1,   1, 1, 1,  -1, 1, 1,
@@ -390,12 +427,14 @@
       }
 
       gl.viewport(0, 0, canvas.width, canvas.height);
+      gWidth = canvas.width;
+      gHeight = canvas.height;
     }
 
     function render() {
       resize();
 
-      gl.clearColor(0, 0, 0, 1);
+      gl.clearColor(0.0, 0.0, 0.0, 0.0);
       gl.enable(gl.DEPTH_TEST);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
@@ -403,8 +442,8 @@
       const proj = mat4Perspective(Math.PI / 4, aspect, 0.1, 1000.0);
 
       let model = mat4Identity();
-      model = mat4Multiply(model, mat4Translation(0, 0, -5));
-      model = mat4Multiply(model, quatToMat4(orientation));
+      model = mat4Multiply(model, mat4Translation(0.0, 0.0, -5.0));
+      model = mat4Multiply(model, quatCreateMatrix(curquat));
 
       const mvp = mat4Multiply(proj, model);
       const normalMatrix = mat3FromMat4(model);
@@ -416,42 +455,66 @@
       gl.uniformMatrix4fv(uModel, false, model);
       gl.uniformMatrix3fv(uNormalMatrix, false, normalMatrix);
 
-      gl.uniform3fv(uBaseColor, new Float32Array([1, 1, 1]));
-      gl.uniform3fv(uLightDir, new Float32Array(lightDirWorld));
-      gl.uniform3fv(uDiffuseLight, new Float32Array(diffuseLight));
-      gl.uniform3fv(uSpecularLight, new Float32Array(specularLight));
-      gl.uniform3fv(uViewPos, new Float32Array([0, 0, 0]));
+      gl.uniform3fv(uBaseColor, new Float32Array([0.8, 0.8, 0.8]));
+      gl.uniform3fv(uDiffuseLight, new Float32Array(diffuseLight.slice(0, 3)));
+      gl.uniform3fv(uSpecularLight, new Float32Array(specularLight.slice(0, 3)));
+      gl.uniform3fv(uLightPos, new Float32Array(lightPosition.slice(0, 3)));
+
+      // Original spotlight behavior approximation:
+      // light at (1,0,8), pointing roughly toward -Z
+      gl.uniform3fv(uSpotDir, new Float32Array([0.0, 0.0, -1.0]));
+      gl.uniform1f(uSpotCutoffCos, Math.cos(10.0 * Math.PI / 180.0));
+      gl.uniform1f(uSpotExponent, 75.0);
+      gl.uniform3fv(uViewPos, new Float32Array([0.0, 0.0, 0.0]));
       gl.uniform1f(uShininess, 128.0);
 
       gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
 
       hud.textContent =
-        `Trackball Quaternion\n` +
-        `x: ${orientation[0].toFixed(4)}\n` +
-        `y: ${orientation[1].toFixed(4)}\n` +
-        `z: ${orientation[2].toFixed(4)}\n` +
-        `w: ${orientation[3].toFixed(4)}\n` +
-        `\nDrag: mouse left button`;
-
+        `Trackball Demo (original logic)\n` +
+        `curquat.x = ${curquat.x.toFixed(4)}\n` +
+        `curquat.y = ${curquat.y.toFixed(4)}\n` +
+        `curquat.z = ${curquat.z.toFixed(4)}\n` +
+        `curquat.w = ${curquat.w.toFixed(4)}\n` +
+        `\nDrag: left mouse button`;
       requestAnimationFrame(render);
     }
 
     canvas.addEventListener("mousedown", (e) => {
       if (e.button !== 0) return;
-      mouseButtonPressed = true;
-      oldMousePosX = e.clientX;
-      oldMousePosY = e.clientY;
+      oldMousePos.x = currentMousePos.x = e.clientX;
+      oldMousePos.y = currentMousePos.y = e.clientY;
+      isMouseActive = true;
     });
 
     window.addEventListener("mouseup", () => {
-      mouseButtonPressed = false;
+      isMouseActive = false;
     });
 
     window.addEventListener("mousemove", (e) => {
-      if (mouseButtonPressed) {
-        applyTrackballDrag(oldMousePosX, oldMousePosY, e.clientX, e.clientY);
-        oldMousePosX = e.clientX;
-        oldMousePosY = e.clientY;
+      currentMousePos.x = e.clientX;
+      currentMousePos.y = e.clientY;
+
+      if (isMouseActive) {
+        // Mirrors TrackballDemo.cpp exactly
+        const x1 = (2.0 * oldMousePos.x - gWidth) / gWidth;
+        const y1 = (gHeight - 2.0 * oldMousePos.y) / gHeight;
+        const x2 = (2.0 * currentMousePos.x - gWidth) / gWidth;
+        const y2 = (gHeight - 2.0 * currentMousePos.y) / gHeight;
+
+        lastquat = calcTrackball(x1, y1, x2, y2);
+        curquat = quatAddStyle(lastquat, curquat);
+        curquat = quatNormalize(curquat);
+      }
+
+      oldMousePos.x = currentMousePos.x;
+      oldMousePos.y = currentMousePos.y;
+    });
+
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        curquat = quatIdentity();
+        lastquat = quatIdentity();
       }
     });
 
