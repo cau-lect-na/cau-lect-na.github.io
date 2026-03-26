@@ -409,8 +409,8 @@
         const dy = currentMousePosY - oldMousePosY;
 
         // drag sensitivity
-        const sx = degToRad(-dx * 0.5);
-        const sy = degToRad(-dy * 0.5);
+        const sx = degToRad(dx * 0.5);
+        const sy = degToRad(dy * 0.5);
 
         // world Y axis for horizontal drag
         const qYaw = quatFromAxisAngle([0, 1, 0], sx);
