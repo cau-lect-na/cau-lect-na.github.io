@@ -303,6 +303,7 @@
         if (spotCos > uSpotCutoffCos) {
           spot = pow(spotCos, uSpotExponent);
         }
+        spot = 1.0;
 
         float diff = max(dot(N, L), 0.0) * spot;
         float spec = 0.0;
