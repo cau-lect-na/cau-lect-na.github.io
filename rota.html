@@ -1,524 +1,247 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Trackball Demo - WebGL</title>
-  <style>
-    html, body {
-      margin: 0;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      background: #000;
-      font-family: Arial, sans-serif;
-    }
-    #glcanvas {
-      display: block;
-      width: 100vw;
-      height: 100vh;
-    }
-    #hud {
-      position: fixed;
-      left: 16px;
-      top: 16px;
-      color: white;
-      background: rgba(0, 0, 0, 0.45);
-      padding: 10px 12px;
-      border-radius: 8px;
-      font-size: 15px;
-      line-height: 1.45;
-      white-space: pre-line;
-      user-select: none;
-      z-index: 10;
-    }
-  </style>
+<meta charset="UTF-8">
+<title>WebGL Rotating Cube + Axis</title>
+<style>
+  body { margin: 0; overflow: hidden; background: #111; }
+  canvas { width: 100vw; height: 100vh; display: block; }
+</style>
 </head>
 <body>
-  <canvas id="glcanvas"></canvas>
-  <div id="hud"></div>
+<canvas id="glcanvas"></canvas>
 
-  <script>
-    const canvas = document.getElementById("glcanvas");
-    const gl = canvas.getContext("webgl");
-    const hud = document.getElementById("hud");
+<script>
+const canvas = document.getElementById("glcanvas");
+const gl = canvas.getContext("webgl");
 
-    if (!gl) {
-      alert("WebGL is not supported.");
-      throw new Error("WebGL unavailable");
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
+
+// -----------------------------
+// 셰이더
+// -----------------------------
+const vs = `
+attribute vec3 aPosition;
+attribute vec3 aColor;
+uniform mat4 uMVP;
+varying vec3 vColor;
+
+void main(){
+  gl_Position = uMVP * vec4(aPosition,1.0);
+  vColor = aColor;
+}
+`;
+
+const fs = `
+precision mediump float;
+varying vec3 vColor;
+void main(){
+  gl_FragColor = vec4(vColor,1.0);
+}
+`;
+
+function compile(type, src){
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  return s;
+}
+
+const program = gl.createProgram();
+gl.attachShader(program, compile(gl.VERTEX_SHADER, vs));
+gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fs));
+gl.linkProgram(program);
+gl.useProgram(program);
+
+const aPos = gl.getAttribLocation(program, "aPosition");
+const aCol = gl.getAttribLocation(program, "aColor");
+const uMVP = gl.getUniformLocation(program, "uMVP");
+
+// -----------------------------
+// 큐브
+// -----------------------------
+const cubeSize = 0.4;
+const h = cubeSize / 2;
+
+const cubeVertices = new Float32Array([
+ -h,-h,h,  h,-h,h,  h,h,h,  -h,-h,h,  h,h,h,  -h,h,h,
+ -h,-h,-h, -h,h,-h, h,h,-h, -h,-h,-h, h,h,-h, h,-h,-h,
+ -h,-h,-h, -h,-h,h, -h,h,h, -h,-h,-h, -h,h,h, -h,h,-h,
+ h,-h,-h, h,h,-h, h,h,h, h,-h,-h, h,h,h, h,-h,h,
+ -h,h,-h, -h,h,h, h,h,h, -h,h,-h, h,h,h, h,h,-h,
+ -h,-h,-h, h,-h,-h, h,-h,h, -h,-h,-h, h,-h,h, -h,-h,h
+]);
+
+const cubeColors = new Float32Array(36*3).fill(0.7);
+
+// -----------------------------
+// ⭐ 회전축 정의
+// -----------------------------
+const axisDir = [1, 1, 0.3];
+const axisPos = [0, 0, 0];
+const anglePerFrame = Math.PI / 180;
+
+// -----------------------------
+// ⭐ 축 라인 생성
+// -----------------------------
+function normalize(v){
+  const l = Math.hypot(...v);
+  return v.map(x=>x/l);
+}
+
+const nAxis = normalize(axisDir);
+const axisLength = 2.0;
+
+const axisVertices = new Float32Array([
+  axisPos[0] - nAxis[0]*axisLength,
+  axisPos[1] - nAxis[1]*axisLength,
+  axisPos[2] - nAxis[2]*axisLength,
+
+  axisPos[0] + nAxis[0]*axisLength,
+  axisPos[1] + nAxis[1]*axisLength,
+  axisPos[2] + nAxis[2]*axisLength
+]);
+
+const axisColors = new Float32Array([
+  1,0,0,
+  1,0,0
+]);
+
+// -----------------------------
+// 버퍼 생성 함수
+// -----------------------------
+function createBuffer(data, loc){
+  const b = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, b);
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+  return b;
+}
+
+// 큐브 버퍼
+const cubePosBuf = createBuffer(cubeVertices, aPos);
+const cubeColBuf = createBuffer(cubeColors, aCol);
+
+// 축 버퍼
+const axisPosBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, axisPosBuf);
+gl.bufferData(gl.ARRAY_BUFFER, axisVertices, gl.STATIC_DRAW);
+
+const axisColBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, axisColBuf);
+gl.bufferData(gl.ARRAY_BUFFER, axisColors, gl.STATIC_DRAW);
+
+gl.enable(gl.DEPTH_TEST);
+
+// -----------------------------
+// 행렬
+// -----------------------------
+function identity(){
+  return new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);
+}
+
+function multiply(a,b){
+  const o = new Float32Array(16);
+  for(let c=0;c<4;c++){
+    for(let r=0;r<4;r++){
+      o[c*4+r]=
+        a[r]*b[c*4]+
+        a[r+4]*b[c*4+1]+
+        a[r+8]*b[c*4+2]+
+        a[r+12]*b[c*4+3];
     }
-
-    // Original light setup
-    const diffuseLight = [0.8, 0.8, 0.8, 1.0];
-    const specularLight = [1.0, 1.0, 1.0, 1.0];
-    const lightPosition = [1.0, 0.0, 8.0, 1.0];
-
-    // Trackball constants / state
-    const TRACKBALL_SIZE = 0.7;
-    let gWidth = 1;
-    let gHeight = 1;
-
-    let isMouseActive = false;
-    let oldMousePos = { x: 0, y: 0 };
-    let currentMousePos = { x: 0, y: 0 };
-
-    // curquat / lastquat like original
-    let curquat = quatIdentity();
-    let lastquat = quatIdentity();
-
-    function clamp(v, lo, hi) {
-      return Math.max(lo, Math.min(hi, v));
-    }
-
-    function vec3(x = 0, y = 0, z = 0) {
-      return { x, y, z };
-    }
-
-    function vecSub(a, b) {
-      return vec3(a.x - b.x, a.y - b.y, a.z - b.z);
-    }
-
-    function vecCross(v1, v2) {
-      return vec3(
-        v1.y * v2.z - v1.z * v2.y,
-        v1.z * v2.x - v1.x * v2.z,
-        v1.x * v2.y - v1.y * v2.x
-      );
-    }
-
-    function vecLength(v) {
-      return Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-    }
-
-    function vecNormalize(v) {
-      let len = vecLength(v);
-      if (len === 0.0) len = 1.0;
-      return vec3(v.x / len, v.y / len, v.z / len);
-    }
-
-    function quatIdentity() {
-      return { x: 0, y: 0, z: 0, w: 1 };
-    }
-
-    // Mirrors CQuaternion::CreateQuatFromAxis()
-    function createQuatFromAxis(axis, phi) {
-      const a = vecNormalize(axis);
-      const half = phi * 0.5;
-      const sine = Math.sin(half);
-      return {
-        x: a.x * sine,
-        y: a.y * sine,
-        z: a.z * sine,
-        w: Math.cos(half)
-      };
-    }
-
-    // Mirrors CQuaternion::operator+()
-    function quatAddStyle(a, q) {
-      const v1 = vec3(a.x, a.y, a.z);
-      const v2 = vec3(q.x, q.y, q.z);
-
-      // cross.CrossProduct(v2, v1)
-      const cross = vecCross(v2, v1);
-
-      const scaledV1 = vec3(v1.x * q.w, v1.y * q.w, v1.z * q.w);
-      const scaledV2 = vec3(v2.x * a.w, v2.y * a.w, v2.z * a.w);
-
-      const v3 = vec3(
-        cross.x + scaledV1.x + scaledV2.x,
-        cross.y + scaledV1.y + scaledV2.y,
-        cross.z + scaledV1.z + scaledV2.z
-      );
-
-      return {
-        x: v3.x,
-        y: v3.y,
-        z: v3.z,
-        w: a.w * q.w - (a.x * q.x + a.y * q.y + a.z * q.z)
-      };
-    }
-
-    function quatNormalize(q) {
-      let len = Math.sqrt(q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w);
-      if (len === 0.0) len = 1.0;
-      return {
-        x: q.x / len,
-        y: q.y / len,
-        z: q.z / len,
-        w: q.w / len
-      };
-    }
-
-    // Mirrors CQuaternion::CreateMatrix()
-    function quatCreateMatrix(q) {
-      return new Float32Array([
-        1.0 - 2.0 * (q.y * q.y + q.z * q.z),
-        2.0 * (q.x * q.y - q.z * q.w),
-        2.0 * (q.z * q.x + q.y * q.w),
-        0.0,
-
-        2.0 * (q.x * q.y + q.z * q.w),
-        1.0 - 2.0 * (q.z * q.z + q.x * q.x),
-        2.0 * (q.y * q.z - q.x * q.w),
-        0.0,
-
-        2.0 * (q.z * q.x - q.y * q.w),
-        2.0 * (q.y * q.z + q.x * q.w),
-        1.0 - 2.0 * (q.y * q.y + q.x * q.x),
-        0.0,
-
-        0.0, 0.0, 0.0, 1.0
-      ]);
-    }
-
-    // Mirrors CTrackball::ProjectPointToSphere()
-    function projectPointToSphere(radius, x, y) {
-      const length = Math.sqrt(x * x + y * y);
-      let z = 0.0;
-
-      if (length < radius * 0.70710678118654752440) {
-        z = Math.sqrt(radius * radius - length * length);
-      } else {
-        radius = radius / 1.41421356237309504880;
-        z = radius * radius / length;
-      }
-      return z;
-    }
-
-    // Mirrors CTrackball::CalcTrackball()
-    function calcTrackball(x1, y1, x2, y2) {
-      const p1 = vec3(x1, y1, projectPointToSphere(TRACKBALL_SIZE, x1, y1));
-      const p2 = vec3(x2, y2, projectPointToSphere(TRACKBALL_SIZE, x2, y2));
-
-      const difference = vecSub(p1, p2);
-      let length = vecLength(difference) / (2.0 * TRACKBALL_SIZE);
-
-      if (length > 1.0) length = 1.0;
-      if (length < -1.0) length = -1.0;
-
-      const phi = 2.0 * Math.asin(length);
-
-      // axis.CrossProduct(p2, p1)
-      const axis = vecCross(p2, p1);
-
-      return createQuatFromAxis(axis, phi);
-    }
-
-    function mat4Identity() {
-      return new Float32Array([
-        1,0,0,0,
-        0,1,0,0,
-        0,0,1,0,
-        0,0,0,1
-      ]);
-    }
-
-    function mat4Multiply(a, b) {
-      const out = new Float32Array(16);
-      for (let c = 0; c < 4; c++) {
-        for (let r = 0; r < 4; r++) {
-          out[c * 4 + r] =
-            a[0 * 4 + r] * b[c * 4 + 0] +
-            a[1 * 4 + r] * b[c * 4 + 1] +
-            a[2 * 4 + r] * b[c * 4 + 2] +
-            a[3 * 4 + r] * b[c * 4 + 3];
-        }
-      }
-      return out;
-    }
-
-    function mat4Translation(x, y, z) {
-      const m = mat4Identity();
-      m[12] = x;
-      m[13] = y;
-      m[14] = z;
-      return m;
-    }
-
-    function mat4Perspective(fovyRad, aspect, near, far) {
-      const f = 1.0 / Math.tan(fovyRad / 2);
-      const nf = 1 / (near - far);
-      const out = new Float32Array(16);
-      out[0] = f / aspect;
-      out[5] = f;
-      out[10] = (far + near) * nf;
-      out[11] = -1;
-      out[14] = (2 * far * near) * nf;
-      return out;
-    }
-
-    function mat3FromMat4(m) {
-      return new Float32Array([
-        m[0], m[1], m[2],
-        m[4], m[5], m[6],
-        m[8], m[9], m[10]
-      ]);
-    }
-
-    const vsSource = `
-      attribute vec3 aPosition;
-      attribute vec3 aNormal;
-
-      uniform mat4 uMVP;
-      uniform mat4 uModel;
-      uniform mat3 uNormalMatrix;
-
-      varying vec3 vNormal;
-      varying vec3 vWorldPos;
-
-      void main() {
-        vec4 worldPos = uModel * vec4(aPosition, 1.0);
-        gl_Position = uMVP * vec4(aPosition, 1.0);
-        vWorldPos = worldPos.xyz;
-        vNormal = normalize(uNormalMatrix * aNormal);
-      }
-    `;
-
-    const fsSource = `
-      precision mediump float;
-
-      varying vec3 vNormal;
-      varying vec3 vWorldPos;
-
-      uniform vec3 uBaseColor;
-      uniform vec3 uDiffuseLight;
-      uniform vec3 uSpecularLight;
-      uniform vec3 uLightPos;
-      uniform vec3 uSpotDir;
-      uniform float uSpotCutoffCos;
-      uniform float uSpotExponent;
-      uniform vec3 uViewPos;
-      uniform float uShininess;
-
-      void main() {
-        vec3 N = normalize(vNormal);
-        vec3 L = normalize(uLightPos - vWorldPos);
-        vec3 V = normalize(uViewPos - vWorldPos);
-        vec3 R = reflect(-L, N);
-
-        vec3 lightToFrag = normalize(vWorldPos - uLightPos);
-        float spotCos = dot(lightToFrag, normalize(uSpotDir));
-        float spot = 0.0;
-
-        if (spotCos > uSpotCutoffCos) {
-          spot = pow(spotCos, uSpotExponent);
-        }
-
-        float diff = max(dot(N, L), 0.0) * spot;
-        float spec = 0.0;
-        if (diff > 0.0) {
-          spec = pow(max(dot(V, R), 0.0), uShininess) * spot;
-        }
-
-        vec3 ambient = 0.10 * uBaseColor;
-        vec3 diffuse = diff * uDiffuseLight * uBaseColor;
-        vec3 specular = spec * 0.35 * uSpecularLight;
-
-        gl_FragColor = vec4(ambient + diffuse + specular, 1.0);
-      }
-    `;
-
-    function compileShader(type, source) {
-      const shader = gl.createShader(type);
-      gl.shaderSource(shader, source);
-      gl.compileShader(shader);
-      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-        throw new Error(gl.getShaderInfoLog(shader));
-      }
-      return shader;
-    }
-
-    function createProgram(vsSource, fsSource) {
-      const program = gl.createProgram();
-      gl.attachShader(program, compileShader(gl.VERTEX_SHADER, vsSource));
-      gl.attachShader(program, compileShader(gl.FRAGMENT_SHADER, fsSource));
-      gl.linkProgram(program);
-      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        throw new Error(gl.getProgramInfoLog(program));
-      }
-      return program;
-    }
-
-    const program = createProgram(vsSource, fsSource);
-    gl.useProgram(program);
-
-    const aPosition = gl.getAttribLocation(program, "aPosition");
-    const aNormal = gl.getAttribLocation(program, "aNormal");
-
-    const uMVP = gl.getUniformLocation(program, "uMVP");
-    const uModel = gl.getUniformLocation(program, "uModel");
-    const uNormalMatrix = gl.getUniformLocation(program, "uNormalMatrix");
-    const uBaseColor = gl.getUniformLocation(program, "uBaseColor");
-    const uDiffuseLight = gl.getUniformLocation(program, "uDiffuseLight");
-    const uSpecularLight = gl.getUniformLocation(program, "uSpecularLight");
-    const uLightPos = gl.getUniformLocation(program, "uLightPos");
-    const uSpotDir = gl.getUniformLocation(program, "uSpotDir");
-    const uSpotCutoffCos = gl.getUniformLocation(program, "uSpotCutoffCos");
-    const uSpotExponent = gl.getUniformLocation(program, "uSpotExponent");
-    const uViewPos = gl.getUniformLocation(program, "uViewPos");
-    const uShininess = gl.getUniformLocation(program, "uShininess");
-
-    // glutSolidCube(2.0f) equivalent
-    const cubePositions = new Float32Array([
-      -1,-1, 1,   1,-1, 1,   1, 1, 1,
-      -1,-1, 1,   1, 1, 1,  -1, 1, 1,
-
-       1,-1,-1,  -1,-1,-1,  -1, 1,-1,
-       1,-1,-1,  -1, 1,-1,   1, 1,-1,
-
-      -1,-1,-1,  -1,-1, 1,  -1, 1, 1,
-      -1,-1,-1,  -1, 1, 1,  -1, 1,-1,
-
-       1,-1, 1,   1,-1,-1,   1, 1,-1,
-       1,-1, 1,   1, 1,-1,   1, 1, 1,
-
-      -1, 1, 1,   1, 1, 1,   1, 1,-1,
-      -1, 1, 1,   1, 1,-1,  -1, 1,-1,
-
-      -1,-1,-1,   1,-1,-1,   1,-1, 1,
-      -1,-1,-1,   1,-1, 1,  -1,-1, 1
-    ]);
-
-    const cubeNormals = new Float32Array([
-       0, 0, 1,   0, 0, 1,   0, 0, 1,
-       0, 0, 1,   0, 0, 1,   0, 0, 1,
-
-       0, 0,-1,   0, 0,-1,   0, 0,-1,
-       0, 0,-1,   0, 0,-1,   0, 0,-1,
-
-      -1, 0, 0,  -1, 0, 0,  -1, 0, 0,
-      -1, 0, 0,  -1, 0, 0,  -1, 0, 0,
-
-       1, 0, 0,   1, 0, 0,   1, 0, 0,
-       1, 0, 0,   1, 0, 0,   1, 0, 0,
-
-       0, 1, 0,   0, 1, 0,   0, 1, 0,
-       0, 1, 0,   0, 1, 0,   0, 1, 0,
-
-       0,-1, 0,   0,-1, 0,   0,-1, 0,
-       0,-1, 0,   0,-1, 0,   0,-1, 0
-    ]);
-
-    function createArrayBuffer(data) {
-      const buffer = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-      gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
-      return buffer;
-    }
-
-    const positionBuffer = createArrayBuffer(cubePositions);
-    const normalBuffer = createArrayBuffer(cubeNormals);
-    const vertexCount = cubePositions.length / 3;
-
-    function bindAttribute(buffer, attribLocation, size) {
-      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-      gl.enableVertexAttribArray(attribLocation);
-      gl.vertexAttribPointer(attribLocation, size, gl.FLOAT, false, 0, 0);
-    }
-
-    function resize() {
-      const dpr = window.devicePixelRatio || 1;
-      const width = Math.floor(canvas.clientWidth * dpr);
-      const height = Math.floor(canvas.clientHeight * dpr);
-
-      if (canvas.width !== width || canvas.height !== height) {
-        canvas.width = width;
-        canvas.height = height;
-      }
-
-      gl.viewport(0, 0, canvas.width, canvas.height);
-      gWidth = canvas.width;
-      gHeight = canvas.height;
-    }
-
-    function render() {
-      resize();
-
-      gl.clearColor(0.0, 0.0, 0.0, 0.0);
-      gl.enable(gl.DEPTH_TEST);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-      const aspect = canvas.width / canvas.height;
-      const proj = mat4Perspective(Math.PI / 4, aspect, 0.1, 1000.0);
-
-      let model = mat4Identity();
-      model = mat4Multiply(model, mat4Translation(0.0, 0.0, -5.0));
-      model = mat4Multiply(model, quatCreateMatrix(curquat));
-
-      const mvp = mat4Multiply(proj, model);
-      const normalMatrix = mat3FromMat4(model);
-
-      bindAttribute(positionBuffer, aPosition, 3);
-      bindAttribute(normalBuffer, aNormal, 3);
-
-      gl.uniformMatrix4fv(uMVP, false, mvp);
-      gl.uniformMatrix4fv(uModel, false, model);
-      gl.uniformMatrix3fv(uNormalMatrix, false, normalMatrix);
-
-      gl.uniform3fv(uBaseColor, new Float32Array([0.8, 0.8, 0.8]));
-      gl.uniform3fv(uDiffuseLight, new Float32Array(diffuseLight.slice(0, 3)));
-      gl.uniform3fv(uSpecularLight, new Float32Array(specularLight.slice(0, 3)));
-      gl.uniform3fv(uLightPos, new Float32Array(lightPosition.slice(0, 3)));
-
-      // Original spotlight behavior approximation:
-      // light at (1,0,8), pointing roughly toward -Z
-      gl.uniform3fv(uSpotDir, new Float32Array([0.0, 0.0, -1.0]));
-      gl.uniform1f(uSpotCutoffCos, Math.cos(10.0 * Math.PI / 180.0));
-      gl.uniform1f(uSpotExponent, 75.0);
-      gl.uniform3fv(uViewPos, new Float32Array([0.0, 0.0, 0.0]));
-      gl.uniform1f(uShininess, 128.0);
-
-      gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
-
-      hud.textContent =
-        `Trackball Demo (original logic)\n` +
-        `curquat.x = ${curquat.x.toFixed(4)}\n` +
-        `curquat.y = ${curquat.y.toFixed(4)}\n` +
-        `curquat.z = ${curquat.z.toFixed(4)}\n` +
-        `curquat.w = ${curquat.w.toFixed(4)}\n` +
-        `\nDrag: left mouse button`;
-      requestAnimationFrame(render);
-    }
-
-    canvas.addEventListener("mousedown", (e) => {
-      if (e.button !== 0) return;
-      oldMousePos.x = currentMousePos.x = e.clientX;
-      oldMousePos.y = currentMousePos.y = e.clientY;
-      isMouseActive = true;
-    });
-
-    window.addEventListener("mouseup", () => {
-      isMouseActive = false;
-    });
-
-    window.addEventListener("mousemove", (e) => {
-      currentMousePos.x = e.clientX;
-      currentMousePos.y = e.clientY;
-
-      if (isMouseActive) {
-        // Mirrors TrackballDemo.cpp exactly
-        const x1 = (2.0 * oldMousePos.x - gWidth) / gWidth;
-        const y1 = (gHeight - 2.0 * oldMousePos.y) / gHeight;
-        const x2 = (2.0 * currentMousePos.x - gWidth) / gWidth;
-        const y2 = (gHeight - 2.0 * currentMousePos.y) / gHeight;
-
-        lastquat = calcTrackball(x1, y1, x2, y2);
-        curquat = quatAddStyle(lastquat, curquat);
-        curquat = quatNormalize(curquat);
-      }
-
-      oldMousePos.x = currentMousePos.x;
-      oldMousePos.y = currentMousePos.y;
-    });
-
-    window.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        curquat = quatIdentity();
-        lastquat = quatIdentity();
-      }
-    });
-
-    render();
-  </script>
+  }
+  return o;
+}
+
+function translate(x,y,z){
+  return new Float32Array([
+    1,0,0,0,
+    0,1,0,0,
+    0,0,1,0,
+    x,y,z,1
+  ]);
+}
+
+// ⭐ 회전행렬 생성
+function rotation(angle, axis){
+  const [x,y,z]=normalize(axis);
+  const c=Math.cos(angle);
+  const s=Math.sin(angle);
+  const t=1-c;
+
+  return new Float32Array([
+    t*x*x+c, t*x*y+s*z, t*x*z-s*y, 0,
+    t*x*y-s*z, t*y*y+c, t*y*z+s*x, 0,
+    t*x*z+s*y, t*y*z-s*x, t*z*z+c, 0,
+    0,0,0,1
+  ]);
+}
+
+function ortho(l,r,b,t,n,f){
+  return new Float32Array([
+    2/(r-l),0,0,0,
+    0,2/(t-b),0,0,
+    0,0,2/(n-f),0,
+    -(r+l)/(r-l),
+    -(t+b)/(t-b),
+    (f+n)/(n-f),
+    1
+  ]);
+}
+
+let model = identity();
+
+// -----------------------------
+// 렌더
+// -----------------------------
+function draw(){
+  resizeCanvas();
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+
+  const aspect = canvas.width/canvas.height;
+  const proj = aspect>1 ? ortho(-aspect,aspect,-1,1,-10,10)
+                        : ortho(-1,1,-1/aspect,1/aspect,-10,10);
+
+  const R = rotation(anglePerFrame, axisDir);
+  const T1 = translate(-axisPos[0],-axisPos[1],-axisPos[2]);
+  const T2 = translate(axisPos[0],axisPos[1],axisPos[2]);
+
+  const frameRot = multiply(T2, multiply(R, T1));
+  model = multiply(frameRot, model);
+
+  const mvp = multiply(proj, model);
+
+  // ---- 큐브 ----
+  gl.bindBuffer(gl.ARRAY_BUFFER, cubePosBuf);
+  gl.vertexAttribPointer(aPos,3,gl.FLOAT,false,0,0);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, cubeColBuf);
+  gl.vertexAttribPointer(aCol,3,gl.FLOAT,false,0,0);
+
+  gl.uniformMatrix4fv(uMVP,false,mvp);
+  gl.drawArrays(gl.TRIANGLES,0,36);
+
+  // ---- ⭐ 축 ----
+  gl.bindBuffer(gl.ARRAY_BUFFER, axisPosBuf);
+  gl.vertexAttribPointer(aPos,3,gl.FLOAT,false,0,0);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, axisColBuf);
+  gl.vertexAttribPointer(aCol,3,gl.FLOAT,false,0,0);
+
+  gl.drawArrays(gl.LINES,0,2);
+
+  requestAnimationFrame(draw);
+}
+
+draw();
+</script>
 </body>
 </html>
