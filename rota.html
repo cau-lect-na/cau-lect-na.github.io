@@ -78,13 +78,15 @@ const cubeVertices = new Float32Array([
  -h,-h,-h, h,-h,-h, h,-h,h, -h,-h,-h, h,-h,h, -h,-h,h
 ]);
 
+const colorOn  = 1.0;
+const colorOff = 0.3;
 const faceColors = [
-  [1.0, 0.0, 0.0], // R (front)
-  [0.0, 1.0, 0.0], // G (back)
-  [0.0, 0.0, 1.0], // B (left)
-  [0.0, 1.0, 1.0], // cyan (right)
-  [1.0, 0.0, 1.0], // magenta (top)
-  [1.0, 1.0, 0.0], // yellow (bottom)
+  [colorOn,  colorOff, colorOff], // R (front)
+  [colorOff, colorOn,  colorOff], // G (back)
+  [colorOff, colorOff, colorOn], // B (left)
+  [colorOff, colorOn,  colorOn], // cyan (right)
+  [colorOn,  colorOff, colorOn], // magenta (top)
+  [colorOn,  colorOn,  colorOff], // yellow (bottom)
 ];
 
 const colorArray = [];
