@@ -78,7 +78,26 @@ const cubeVertices = new Float32Array([
  -h,-h,-h, h,-h,-h, h,-h,h, -h,-h,-h, h,-h,h, -h,-h,h
 ]);
 
-const cubeColors = new Float32Array(36*3).fill(0.7);
+const faceColors = [
+  [1.0, 0.0, 0.0], // R (front)
+  [0.0, 1.0, 0.0], // G (back)
+  [0.0, 0.0, 1.0], // B (left)
+  [0.0, 1.0, 1.0], // cyan (right)
+  [1.0, 0.0, 1.0], // magenta (top)
+  [1.0, 1.0, 0.0], // yellow (bottom)
+];
+
+const colorArray = [];
+
+for (const c of faceColors) {
+  // 각 면은 2 triangles = 6 vertices
+  for (let i = 0; i < 6; i++) {
+    colorArray.push(c[0], c[1], c[2]);
+  }
+}
+
+const cubeColors = new Float32Array(colorArray);
+//const cubeColors = new Float32Array(36*3).fill(0.7);
 
 // -----------------------------
 // ⭐ 회전축 정의
