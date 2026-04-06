@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebGL Cubic Curves</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #111;
+      color: #eee;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    .toolbar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      padding: 12px 16px;
+      background: #1c1c1c;
+      border-bottom: 1px solid #333;
+      flex-wrap: wrap;
+    }
+    select, button {
+      background: #222;
+      color: #eee;
+      border: 1px solid #555;
+      padding: 8px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    button:hover, select:hover { background: #2d2d2d; }
+    .info {
+      color: #bbb;
+      font-size: 14px;
+    }
+    canvas {
+      flex: 1;
+      width: 100%;
+      display: block;
+      background: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <label>
+      Curve Type:
+      <select id="curveType">
+        <option value="interpolation">Interpolation</option>
+        <option value="hermite">Hermite</option>
+        <option value="bezier">Bezier</option>
+        <option value="spline">Spline (Catmull-Rom)</option>
+      </select>
+    </label>
+    <button id="clearBtn">Clear</button>
+    <div class="info" id="status"></div>
+  </div>
+  <canvas id="glcanvas"></canvas>
+
+  <script>
+    const canvas = document.getElementById('glcanvas');
+    const gl = canvas.getContext('webgl');
+    const curveTypeSelect = document.getElementById('curveType');
+    const clearBtn = document.getElementById('clearBtn');
+    const statusEl = document.getElementById('status');
+
+    if (!gl) {
+      alert('WebGL을 지원하지 않는 브라우저입니다.');
+      throw new Error('WebGL not supported');
+    }
+
+    const vertexShaderSource = `
+      attribute vec2 a_position;
+      uniform float u_pointSize;
+      void main() {
+        gl_Position = vec4(a_position, 0.0, 1.0);
+        gl_PointSize = u_pointSize;
+      }
+    `;
+
+    const fragmentShaderSource = `
+      precision mediump float;
+      uniform vec4 u_color;
+      void main() {
+        gl_FragColor = u_color;
+      }
+    `;
+
+    function createShader(gl, type, source) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        const log = gl.getShaderInfoLog(shader);
+        gl.deleteShader(shader);
+        throw new Error(log);
+      }
+      return shader;
+    }
+
+    function createProgram(gl, vsSource, fsSource) {
+      const vs = createShader(gl, gl.VERTEX_SHADER, vsSource);
+      const fs = createShader(gl, gl.FRAGMENT_SHADER, fsSource);
+      const program = gl.createProgram();
+      gl.attachShader(program, vs);
+      gl.attachShader(program, fs);
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const log = gl.getProgramInfoLog(program);
+        gl.deleteProgram(program);
+        throw new Error(log);
+      }
+      return program;
+    }
+
+    const program = createProgram(gl, vertexShaderSource, fragmentShaderSource);
+    const posLoc = gl.getAttribLocation(program, 'a_position');
+    const colorLoc = gl.getUniformLocation(program, 'u_color');
+    const pointSizeLoc = gl.getUniformLocation(program, 'u_pointSize');
+    const positionBuffer = gl.createBuffer();
+
+    const state = {
+      mode: 'interpolation',
+      groups: {
+        interpolation: [],
+        bezier: [],
+        spline: [],
+        hermite: []
+      },
+      tempPoints: [],
+      hermitePendingAnchor: null,
+      hermitePreviewMouse: null,
+      hermiteAwaitingVectorLock: false,
+      mouseCanvas: null,
+    };
+
+    function resizeCanvas() {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = Math.floor(rect.width * dpr);
+      canvas.height = Math.floor(rect.height * dpr);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      render();
+    }
+
+    function toClipSpace(x, y) {
+      const rect = canvas.getBoundingClientRect();
+      const nx = (x / rect.width) * 2 - 1;
+      const ny = 1 - (y / rect.height) * 2;
+      return [nx, ny];
+    }
+
+    function getMousePos(evt) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: evt.clientX - rect.left,
+        y: evt.clientY - rect.top,
+      };
+    }
+
+    function drawVertices(vertices, primitive, color, pointSize = 1) {
+      if (!vertices.length) return;
+      gl.useProgram(program);
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(posLoc);
+      gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+      gl.uniform4fv(colorLoc, color);
+      gl.uniform1f(pointSizeLoc, pointSize);
+      gl.drawArrays(primitive, 0, vertices.length / 2);
+    }
+
+    function sampleCubic(control, basisFn, segments = 100) {
+      const out = [];
+      for (let i = 0; i <= segments; i++) {
+        const t = i / segments;
+        const b = basisFn(t);
+        const x = b[0] * control[0][0] + b[1] * control[1][0] + b[2] * control[2][0] + b[3] * control[3][0];
+        const y = b[0] * control[0][1] + b[1] * control[1][1] + b[2] * control[2][1] + b[3] * control[3][1];
+        out.push(x, y);
+      }
+      return out;
+    }
+
+    function interpolationBasis(t) {
+      const t2 = t * t;
+      const t3 = t2 * t;
+      return [
+        -4.5 * t3 + 9.0 * t2 - 5.5 * t + 1.0,
+        13.5 * t3 - 22.5 * t2 + 9.0 * t,
+        -13.5 * t3 + 18.0 * t2 - 4.5 * t,
+        4.5 * t3 - 4.5 * t2 + 1.0 * t,
+      ];
+    }
+
+    function bezierBasis(t) {
+      const mt = 1 - t;
+      const mt2 = mt * mt;
+      const t2 = t * t;
+      return [
+        mt2 * mt,
+        3 * mt2 * t,
+        3 * mt * t2,
+        t2 * t,
+      ];
+    }
+
+    function hermiteBasis(t) {
+      const t2 = t * t;
+      const t3 = t2 * t;
+      return [
+        2 * t3 - 3 * t2 + 1,
+        -2 * t3 + 3 * t2,
+        t3 - 2 * t2 + t,
+        t3 - t2,
+      ];
+    }
+
+    function catmullRomBasis(t) {
+      const t2 = t * t;
+      const t3 = t2 * t;
+      return [
+        -0.5 * t3 + t2 - 0.5 * t,
+        1.5 * t3 - 2.5 * t2 + 1.0,
+        -1.5 * t3 + 2.0 * t2 + 0.5 * t,
+        0.5 * t3 - 0.5 * t2,
+      ];
+    }
+
+    function makeHermiteControl(segment) {
+      return [segment.p0, segment.p1, segment.m0, segment.m1];
+    }
+
+    function curveColor(type) {
+      switch (type) {
+        case 'interpolation': return [0.9, 0.15, 0.15, 1.0];
+        case 'bezier': return [0.1, 0.35, 0.9, 1.0];
+        case 'spline': return [0.1, 0.65, 0.2, 1.0];
+        case 'hermite': return [0.55, 0.1, 0.75, 1.0];
+        default: return [0, 0, 0, 1];
+      }
+    }
+
+    function drawPoint(pt, color = [0, 0, 0, 1], size = 8) {
+      drawVertices([pt[0], pt[1]], gl.POINTS, color, size);
+    }
+
+    function drawPolyline(points, color = [0.6, 0.6, 0.6, 1], closed = false) {
+      if (points.length < 2) return;
+      const verts = [];
+      for (const p of points) verts.push(p[0], p[1]);
+      if (closed) verts.push(points[0][0], points[0][1]);
+      drawVertices(verts, gl.LINE_STRIP, color, 1);
+    }
+
+    function drawArrow(from, to, color = [0.2, 0.2, 0.2, 1]) {
+      const verts = [from[0], from[1], to[0], to[1]];
+      drawVertices(verts, gl.LINES, color, 1);
+
+      const dx = to[0] - from[0];
+      const dy = to[1] - from[1];
+      const len = Math.hypot(dx, dy);
+      if (len < 1e-5) return;
+      const ux = dx / len;
+      const uy = dy / len;
+      const head = 0.04;
+      const angle = Math.PI / 7;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+
+      const lx = cos * (-ux) - sin * (-uy);
+      const ly = sin * (-ux) + cos * (-uy);
+      const rx = cos * (-ux) + sin * (-uy);
+      const ry = -sin * (-ux) + cos * (-uy);
+
+      const left = [to[0] + lx * head, to[1] + ly * head];
+      const right = [to[0] + rx * head, to[1] + ry * head];
+      drawVertices([
+        to[0], to[1], left[0], left[1],
+        to[0], to[1], right[0], right[1]
+      ], gl.LINES, color, 1);
+    }
+
+    function renderCurves() {
+      for (const seg of state.groups.interpolation) {
+        const verts = sampleCubic(seg, interpolationBasis, 120);
+        drawVertices(verts, gl.LINE_STRIP, curveColor('interpolation'));
+        drawPolyline(seg, [0.8, 0.7, 0.7, 1]);
+        seg.forEach(p => drawPoint(p, [0.65, 0.1, 0.1, 1], 7));
+      }
+
+      for (const seg of state.groups.bezier) {
+        const verts = sampleCubic(seg, bezierBasis, 120);
+        drawVertices(verts, gl.LINE_STRIP, curveColor('bezier'));
+        drawPolyline(seg, [0.75, 0.8, 0.95, 1]);
+        seg.forEach(p => drawPoint(p, [0.1, 0.25, 0.7, 1], 7));
+      }
+
+      for (const seg of state.groups.spline) {
+        const verts = sampleCubic(seg, catmullRomBasis, 120);
+        drawVertices(verts, gl.LINE_STRIP, curveColor('spline'));
+        drawPolyline(seg, [0.75, 0.9, 0.75, 1]);
+        seg.forEach(p => drawPoint(p, [0.1, 0.45, 0.1, 1], 7));
+      }
+
+      for (const seg of state.groups.hermite) {
+        const control = makeHermiteControl(seg);
+        const verts = sampleCubic(control, hermiteBasis, 120);
+        drawVertices(verts, gl.LINE_STRIP, curveColor('hermite'));
+        drawPoint(seg.p0, [0.45, 0.0, 0.6, 1], 8);
+        drawPoint(seg.p1, [0.45, 0.0, 0.6, 1], 8);
+        drawArrow(seg.p0, [seg.p0[0] + seg.m0[0], seg.p0[1] + seg.m0[1]], [0.4, 0.15, 0.45, 1]);
+        drawArrow(seg.p1, [seg.p1[0] + seg.m1[0], seg.p1[1] + seg.m1[1]], [0.4, 0.15, 0.45, 1]);
+      }
+    }
+
+    function renderTempGeometry() {
+      const type = state.mode;
+      if (type === 'interpolation' || type === 'bezier' || type === 'spline') {
+        if (state.tempPoints.length > 0) {
+          drawPolyline(state.tempPoints, [0.4, 0.4, 0.4, 1]);
+          state.tempPoints.forEach(p => drawPoint(p, [0, 0, 0, 1], 8));
+        }
+      }
+
+      if (type === 'hermite') {
+        for (const item of state.tempPoints) {
+          drawPoint(item.anchor, [0, 0, 0, 1], 8);
+          if (item.tangent) {
+            drawArrow(item.anchor, [item.anchor[0] + item.tangent[0], item.anchor[1] + item.tangent[1]], [0.1, 0.1, 0.1, 1]);
+          }
+        }
+
+        if (state.hermitePendingAnchor) {
+          drawPoint(state.hermitePendingAnchor, [0, 0, 0, 1], 8);
+          if (state.hermitePreviewMouse) {
+            drawArrow(state.hermitePendingAnchor, state.hermitePreviewMouse, [0, 0, 0, 1]);
+          }
+        }
+      }
+    }
+
+    function render() {
+      gl.clearColor(1, 1, 1, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      renderCurves();
+      renderTempGeometry();
+      updateStatus();
+    }
+
+    function addPointModePoint(pt) {
+      const arr = state.tempPoints;
+      arr.push(pt);
+
+      if (state.mode === 'spline') {
+        if (arr.length >= 4) {
+          const n = arr.length;
+          state.groups.spline.push([
+            arr[n - 4], arr[n - 3], arr[n - 2], arr[n - 1]
+          ]);
+        }
+        return;
+      }
+
+      if (arr.length === 4) {
+        state.groups[state.mode].push([...arr]);
+      } else if (arr.length > 4 && (arr.length - 4) % 3 === 0) {
+        const n = arr.length;
+        state.groups[state.mode].push([
+          arr[n - 4], arr[n - 3], arr[n - 2], arr[n - 1]
+        ]);
+      }
+    }
+
+    function addHermiteAnchor(anchor) {
+      state.hermitePendingAnchor = anchor;
+      state.hermitePreviewMouse = anchor;
+      state.hermiteAwaitingVectorLock = true;
+    }
+
+    function lockHermiteVector(mousePt) {
+      if (!state.hermitePendingAnchor) return;
+      const anchor = state.hermitePendingAnchor;
+      const tangent = [mousePt[0] - anchor[0], mousePt[1] - anchor[1]];
+      state.tempPoints.push({ anchor, tangent });
+      state.hermitePendingAnchor = null;
+      state.hermitePreviewMouse = null;
+      state.hermiteAwaitingVectorLock = false;
+
+      if (state.tempPoints.length >= 2) {
+        const n = state.tempPoints.length;
+        const a = state.tempPoints[n - 2];
+        const b = state.tempPoints[n - 1];
+        state.groups.hermite.push({
+          p0: a.anchor,
+          p1: b.anchor,
+          m0: a.tangent,
+          m1: b.tangent,
+        });
+      }
+    }
+
+    function resetTempForModeChange() {
+      state.tempPoints = [];
+      state.hermitePendingAnchor = null;
+      state.hermitePreviewMouse = null;
+      state.hermiteAwaitingVectorLock = false;
+    }
+
+    function updateStatus() {
+      if (state.mode === 'hermite') {
+        if (state.hermitePendingAnchor) {
+          statusEl.textContent = 'Hermite: 마우스를 움직여 벡터를 정하고, 왼쪽 클릭으로 고정하세요.';
+        } else {
+          statusEl.textContent = `Hermite: 점을 찍어 anchor를 추가하세요. 현재 정의된 벡터 수 ${state.tempPoints.length}`;
+        }
+      } else {
+        if (state.mode === 'spline') {
+          statusEl.textContent = `spline: 처음 4개 점으로 첫 곡선, 이후 점을 1개 추가할 때마다 직전 3개 점과 함께 새 cubic curve가 생성됩니다. 현재 입력 점 ${state.tempPoints.length}`;
+        } else {
+          statusEl.textContent = `${state.mode}: 처음 4개 점으로 첫 곡선, 이후 점 3개를 추가할 때마다 새 cubic curve가 생성됩니다. 현재 입력 점 ${state.tempPoints.length}`;
+        }
+      }
+    }
+
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    canvas.addEventListener('mousemove', (e) => {
+      const p = getMousePos(e);
+      state.mouseCanvas = p;
+      if (state.mode === 'hermite' && state.hermitePendingAnchor) {
+        state.hermitePreviewMouse = toClipSpace(p.x, p.y);
+      }
+      render();
+    });
+
+    canvas.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      const p = getMousePos(e);
+      const clip = toClipSpace(p.x, p.y);
+
+      if (state.mode === 'hermite') {
+        if (state.hermitePendingAnchor) {
+          lockHermiteVector(clip);
+        } else {
+          addHermiteAnchor(clip);
+        }
+      } else {
+        addPointModePoint(clip);
+      }
+      render();
+    });
+
+    curveTypeSelect.addEventListener('change', () => {
+      state.mode = curveTypeSelect.value;
+      resetTempForModeChange();
+      render();
+    });
+
+    clearBtn.addEventListener('click', () => {
+      state.groups = {
+        interpolation: [],
+        bezier: [],
+        spline: [],
+        hermite: []
+      };
+      resetTempForModeChange();
+      render();
+    });
+
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+    render();
+  </script>
+</body>
+</html>
