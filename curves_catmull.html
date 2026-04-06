@@ -231,6 +231,17 @@
       ];
     }
 
+    function uniformBSplineBasis(t) {
+      const t2 = t * t;
+      const t3 = t2 * t;
+      return [
+        (-t3 + 3.0 * t2 - 3.0 * t + 1.0) / 6.0,
+        (3.0 * t3 - 6.0 * t2 + 4.0) / 6.0,
+        (-3.0 * t3 + 3.0 * t2 + 3.0 * t + 1.0) / 6.0,
+        t3 / 6.0,
+      ];
+    }
+
     function makeHermiteControl(segment) {
       return [segment.p0, segment.p1, segment.m0, segment.m1];
     }
