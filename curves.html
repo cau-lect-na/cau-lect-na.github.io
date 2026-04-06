@@ -322,7 +322,7 @@
       const type = state.mode;
       if (type === 'interpolation' || type === 'bezier' || type === 'spline') {
         if (state.tempPoints.length > 0) {
-          drawPolyline(state.tempPoints, [0.4, 0.4, 0.4, 1]);
+          drawPolyline(state.tempPoints, [0.6, 0.6, 0.6, 1]);
           state.tempPoints.forEach(p => drawPoint(p, [0, 0, 0, 1], 8));
         }
       }
