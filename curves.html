@@ -313,8 +313,8 @@
         drawVertices(verts, gl.LINE_STRIP, curveColor('hermite'));
         drawPoint(seg.p0, [0.45, 0.0, 0.6, 1], 8);
         drawPoint(seg.p1, [0.45, 0.0, 0.6, 1], 8);
-        drawArrow(seg.p0, [seg.p0[0] + seg.m0[0], seg.p0[1] + seg.m0[1]], [0.4, 0.15, 0.45, 1]);
-        drawArrow(seg.p1, [seg.p1[0] + seg.m1[0], seg.p1[1] + seg.m1[1]], [0.4, 0.15, 0.45, 1]);
+        drawArrow(seg.p0, [seg.p0[0] + seg.m0[0], seg.p0[1] + seg.m0[1]], [0.85, 0.55, 0.9, 1]);
+        drawArrow(seg.p1, [seg.p1[0] + seg.m1[0], seg.p1[1] + seg.m1[1]], [0.85, 0.55, 0.9, 1]);
       }
     }
 
@@ -348,7 +348,7 @@
       gl.clearColor(1, 1, 1, 1);
       gl.clear(gl.COLOR_BUFFER_BIT);
       renderCurves();
-      //renderTempGeometry();
+      renderTempGeometry();
       updateStatus();
     }
 
