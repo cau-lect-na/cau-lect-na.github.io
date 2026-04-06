@@ -42,6 +42,7 @@
       width: 100%;
       display: block;
       background: #fff;
+      outline: none;
     }
   </style>
 </head>
@@ -59,7 +60,7 @@
     <button id="clearBtn">Clear</button>
     <div class="info" id="status"></div>
   </div>
-  <canvas id="glcanvas"></canvas>
+  <canvas id="glcanvas" tabindex="0"></canvas>
 
   <script>
     const canvas = document.getElementById('glcanvas');
@@ -288,21 +289,21 @@
 
     function renderCurves() {
       for (const seg of state.groups.interpolation) {
-        const verts = sampleCubic($1, $2, state.segments);
+        const verts = sampleCubic(seg, interpolationBasis, state.segments);
         drawVertices(verts, gl.LINE_STRIP, curveColor('interpolation'));
         drawPolyline(seg, [0.8, 0.7, 0.7, 1]);
         seg.forEach(p => drawPoint(p, [0.65, 0.1, 0.1, 1], 7));
       }
 
       for (const seg of state.groups.bezier) {
-        const verts = sampleCubic($1, $2, state.segments);
+        const verts = sampleCubic(seg, bezierBasis, state.segments);
         drawVertices(verts, gl.LINE_STRIP, curveColor('bezier'));
         drawPolyline(seg, [0.75, 0.8, 0.95, 1]);
         seg.forEach(p => drawPoint(p, [0.1, 0.25, 0.7, 1], 7));
       }
 
       for (const seg of state.groups.spline) {
-        const verts = sampleCubic($1, $2, state.segments);
+        const verts = sampleCubic(seg, uniformBSplineBasis, state.segments);
         drawVertices(verts, gl.LINE_STRIP, curveColor('spline'));
         drawPolyline(seg, [0.75, 0.9, 0.75, 1]);
         seg.forEach(p => drawPoint(p, [0.1, 0.45, 0.1, 1], 7));
@@ -310,7 +311,7 @@
 
       for (const seg of state.groups.hermite) {
         const control = makeHermiteControl(seg);
-        const verts = sampleCubic($1, $2, state.segments);
+        const verts = sampleCubic(control, hermiteBasis, state.segments);
         drawVertices(verts, gl.LINE_STRIP, curveColor('hermite'));
         drawPoint(seg.p0, [0.45, 0.0, 0.6, 1], 8);
         drawPoint(seg.p1, [0.45, 0.0, 0.6, 1], 8);
@@ -419,21 +420,15 @@
         } else {
           statusEl.textContent = `Hermite: 점을 찍어 anchor를 추가하세요. 현재 정의된 벡터 수 ${state.tempPoints.length} | segments: ${state.segments}`;
         }
-      } else if (state.mode === 'spline') {
+        return;
+      }
+
+      if (state.mode === 'spline') {
         statusEl.textContent = `spline: 처음 4개 점으로 첫 곡선, 이후 점을 1개 추가할 때마다 직전 3개 점과 함께 새 cubic curve가 생성됩니다. 현재 입력 점 ${state.tempPoints.length} | segments: ${state.segments}`;
-      } else {
-        statusEl.textContent = `${state.mode}: 처음 4개 점으로 첫 곡선, 이후 점 3개를 추가할 때마다 새 cubic curve가 생성됩니다. 현재 입력 점 ${state.tempPoints.length} | segments: ${state.segments}`;
+        return;
       }
-    } else {
-          statusEl.textContent = `Hermite: 점을 찍어 anchor를 추가하세요. 현재 정의된 벡터 수 ${state.tempPoints.length}`;
-        }
-      } else {
-        if (state.mode === 'spline') {
-          statusEl.textContent = `spline: 처음 4개 점으로 첫 곡선, 이후 점을 1개 추가할 때마다 직전 3개 점과 함께 새 cubic curve가 생성됩니다. 현재 입력 점 ${state.tempPoints.length}`;
-        } else {
-          statusEl.textContent = `${state.mode}: 처음 4개 점으로 첫 곡선, 이후 점 3개를 추가할 때마다 새 cubic curve가 생성됩니다. 현재 입력 점 ${state.tempPoints.length}`;
-        }
-      }
+
+      statusEl.textContent = `${state.mode}: 처음 4개 점으로 첫 곡선, 이후 점 3개를 추가할 때마다 새 cubic curve가 생성됩니다. 현재 입력 점 ${state.tempPoints.length} | segments: ${state.segments}`;
     }
 
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -448,6 +443,7 @@
     });
 
     canvas.addEventListener('mousedown', (e) => {
+      canvas.focus();
       if (e.button !== 0) return;
       const p = getMousePos(e);
       const clip = toClipSpace(p.x, p.y);
@@ -481,8 +477,6 @@
       render();
     });
 
-    window.addEventListener('resize', resizeCanvas);
-
     window.addEventListener('keydown', (e) => {
       if (e.key === 'ArrowUp') {
         state.segments += 10;
@@ -492,6 +486,8 @@
         render();
       }
     });
+
+    window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
     render();
   </script>
